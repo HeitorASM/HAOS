@@ -41,6 +41,7 @@ C_SRCS   = kernel/kernel.c        \
            kernel/keyboard.c      \
            kernel/memory.c        \
            drivers/fb.c           \
+           drivers/utf8cp437.c    \
            drivers/font.c         \
            drivers/mouse.c        \
            gui/window.c           \
