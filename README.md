@@ -2,7 +2,6 @@
 
 OS bare-metal 64-bit construído do zero em C + ASM.
 
-## Novidades em v1.1
 
 
 ### Recursos
@@ -69,7 +68,7 @@ help      — lista os comandos
 clear     — limpa a tela
 echo ...  — imprime texto
 about     — info do sistema
-ls        — lista arquivos (simulado)
+ls        — lista arquivos (simulado por enquanto)
 date      — data/hora (placeholder)
 mem       — info de memória
 color     — paleta de cores
