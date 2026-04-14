@@ -12,7 +12,7 @@ static const uint8_t sc_normal[128] = {
     0,0,  // Num lock, Scroll lock
     '7','8','9','-','4','5','6','+','1','2','3','0','.', 0,0,0,
     0,0,  // F11, F12
-    [0 ... 127] = 0  // resto = 0
+    [0 ... 127] = 0
 };
 
 static const uint8_t sc_shift[128] = {
@@ -24,7 +24,6 @@ static const uint8_t sc_shift[128] = {
     [0 ... 127] = 0
 };
 
-// Buffer circular de caracteres
 #define KB_BUF_SIZE 64
 static uint8_t kb_buf[KB_BUF_SIZE];
 static uint8_t kb_head = 0;
@@ -33,7 +32,6 @@ static uint8_t kb_tail = 0;
 static bool shift_pressed = false;
 static bool caps_lock     = false;
 
-// Variáveis definidas em idt_asm.asm
 extern volatile uint8_t  kb_scancode;
 extern volatile uint8_t  kb_ready;
 
@@ -42,13 +40,8 @@ void keyboard_init(void) {
     shift_pressed = caps_lock = false;
 }
 
-// Chamado pelo loop principal para processar scancodes pendentes
-void keyboard_poll(void) {
-    if (!kb_ready) return;
-    kb_ready = 0;
-
-    uint8_t sc = kb_scancode;
-
+// Processa um scancode e insere o caractere no buffer
+static void process_scancode(uint8_t sc) {
     if (sc == 0xE0) return; // scancode estendido: ignora por ora
 
     bool release = (sc & 0x80) != 0;
@@ -84,7 +77,20 @@ void keyboard_poll(void) {
     }
 }
 
-// Retorna o próximo caractere do buffer (0 se vazio)
+void keyboard_poll(void) {
+    // 1) Processa via IRQ (se houver)
+    if (kb_ready) {
+        kb_ready = 0;
+        process_scancode(kb_scancode);
+    }
+
+    // 2) Fallback: polling direto do controlador PS/2 (útil se IRQ falhar)
+    while (inb(0x64) & 0x01) {   // bit 0 = output buffer cheio
+        uint8_t sc = inb(0x60);
+        process_scancode(sc);
+    }
+}
+
 uint8_t keyboard_getchar(void) {
     keyboard_poll();
     if (kb_head == kb_tail) return 0;
@@ -93,7 +99,6 @@ uint8_t keyboard_getchar(void) {
     return c;
 }
 
-// Retorna true se há dados disponíveis
 bool keyboard_has_data(void) {
     keyboard_poll();
     return kb_head != kb_tail;

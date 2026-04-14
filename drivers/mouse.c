@@ -45,6 +45,45 @@ static uint8_t  btn_now  = 0;   // atualizado a cada pacote
 static uint8_t  btn_prev = 0;   // snapshot anterior (antes do snap)
 static uint8_t  btn_snap = 0;   // snapshot do frame atual
 
+// ---- Processamento de um byte do mouse --------------------------
+static void mouse_process_byte(uint8_t b) {
+    switch (pkt_phase) {
+        case 0:
+            // Bit 3 deve estar setado no byte de status
+            if (b & 0x08) {
+                pkt[0] = b;
+                pkt_phase = 1;
+            }
+            break;
+        case 1:
+            pkt[1] = b;
+            pkt_phase = 2;
+            break;
+        case 2:
+            pkt[2] = b;
+            pkt_phase = 0;
+
+            // Extrai botões
+            btn_now = pkt[0] & 0x07;
+
+            // Extrai delta com extensão de sinal
+            int16_t dx = (int16_t)pkt[1];
+            int16_t dy = (int16_t)pkt[2];
+            if (pkt[0] & 0x10) dx |= (int16_t)0xFF00;
+            if (pkt[0] & 0x20) dy |= (int16_t)0xFF00;
+
+            mx += (int32_t)dx;
+            my -= (int32_t)dy;  // eixo Y invertido
+
+            // Clampa nos limites
+            if (mx < 0) mx = 0;
+            if (my < 0) my = 0;
+            if (mx > bounds_x) mx = bounds_x;
+            if (my > bounds_y) my = bounds_y;
+            break;
+    }
+}
+
 // ---- Inicialização ----------------------------------------------
 
 void mouse_init(void) {
@@ -75,44 +114,25 @@ void mouse_init(void) {
 // ---- Processamento do ring-buffer (polling) ---------------------
 
 void mouse_process(void) {
+    // 1) Processa bytes do buffer da ISR (via IRQ12)
     while (mouse_tl != mouse_hd) {
         uint8_t b = mouse_buf[mouse_tl];
         mouse_tl = (mouse_tl + 1) & 31;
+        mouse_process_byte(b);
+    }
 
-        switch (pkt_phase) {
-            case 0:
-                // Bit 3 deve estar setado no byte de status
-                if (b & 0x08) {
-                    pkt[0] = b;
-                    pkt_phase = 1;
-                }
-                break;
-            case 1:
-                pkt[1] = b;
-                pkt_phase = 2;
-                break;
-            case 2:
-                pkt[2] = b;
-                pkt_phase = 0;
-
-                // Extrai botões
-                btn_now = pkt[0] & 0x07;
-
-                // Extrai delta com extensão de sinal
-                int16_t dx = (int16_t)pkt[1];
-                int16_t dy = (int16_t)pkt[2];
-                if (pkt[0] & 0x10) dx |= (int16_t)0xFF00;
-                if (pkt[0] & 0x20) dy |= (int16_t)0xFF00;
-
-                mx += (int32_t)dx;
-                my -= (int32_t)dy;  // eixo Y invertido
-
-                // Clampa nos limites
-                if (mx < 0) mx = 0;
-                if (my < 0) my = 0;
-                if (mx > bounds_x) mx = bounds_x;
-                if (my > bounds_y) my = bounds_y;
-                break;
+    // 2) Fallback: polling direto da porta PS/2 (útil se IRQ12 falhar)
+    //    Verifica se há dados disponíveis no buffer de saída
+    while (inb(0x64) & 0x01) {   // bit 0 = output buffer cheio
+        uint8_t status = inb(0x64);
+        // Verifica se o byte veio do mouse (bit 5 = 1)
+        if (status & 0x20) {
+            uint8_t b = inb(0x60);
+            mouse_process_byte(b);
+        } else {
+            // Se não for do mouse, pode ser do teclado - ignora aqui
+            // (o driver de teclado tem seu próprio polling)
+            break;
         }
     }
 }

@@ -247,6 +247,14 @@ static void draw_welcome_screen(void) {
 #define ICON_H 48
 #define ICON_LABEL_H 14
 
+// Coordenadas dos ícones
+#define ICON_TERM_X  20
+#define ICON_TERM_Y  20
+#define ICON_ABOUT_X 20
+#define ICON_ABOUT_Y (20 + ICON_H + ICON_LABEL_H + 16)
+#define ICON_CONF_X  20
+#define ICON_CONF_Y  (20 + (ICON_H + ICON_LABEL_H + 16) * 2)
+
 // Ícone Terminal: fundo escuro + texto "> _"
 static void draw_icon_terminal(uint32_t ix, uint32_t iy) {
     // Corpo do ícone
@@ -317,9 +325,9 @@ static void draw_icon_settings(uint32_t ix, uint32_t iy) {
 }
 
 static void draw_desktop_icons(void) {
-    draw_icon_terminal(20, 20);
-    draw_icon_about(20, 20 + ICON_H + ICON_LABEL_H + 16);
-    draw_icon_settings(20, 20 + (ICON_H + ICON_LABEL_H + 16) * 2);
+    draw_icon_terminal(ICON_TERM_X, ICON_TERM_Y);
+    draw_icon_about(ICON_ABOUT_X, ICON_ABOUT_Y);
+    draw_icon_settings(ICON_CONF_X, ICON_CONF_Y);
 }
 
 // ============================================================
@@ -508,10 +516,7 @@ static void handle_desktop_key(uint8_t c) {
         return;
     }
 
-    // F1 abre/fecha menu (não conflita com nada digitável no terminal)
-    // Como só temos ASCII básico, usamos Ctrl+S = 0x13 p/ menu
-    // (mas para não quebrar o terminal, a melhor solução é:
-    //  se há janela focada com on_key → despacha para ela SEMPRE)
+    // Se há janela focada com on_key → despacha para ela SEMPRE
     Window* focused = wm_get_focused();
     if (focused && focused->on_key) {
         // Despacha para a janela (terminal recebe o char)
@@ -530,6 +535,38 @@ static void handle_desktop_key(uint8_t c) {
         return;
     }
     if (c == 'a' || c == 'A') { open_about_window(); return; }
+}
+
+// Função auxiliar para tratar cliques nos ícones
+static void desktop_handle_click(int32_t mx, int32_t my, uint32_t sw, uint32_t sh) {
+    // Verifica ícone do Terminal
+    if (mx >= ICON_TERM_X && mx < ICON_TERM_X + ICON_W &&
+        my >= ICON_TERM_Y && my < ICON_TERM_Y + ICON_H + ICON_LABEL_H) {
+        if (!terminal_win || !terminal_win->active) {
+            terminal_win = terminal_create((int32_t)(sw/2 - 340), (int32_t)(sh/2 - 200));
+        } else {
+            wm_focus(terminal_win);
+        }
+        start_menu_open = false;
+        return;
+    }
+
+    // Verifica ícone Sobre
+    if (mx >= ICON_ABOUT_X && mx < ICON_ABOUT_X + ICON_W &&
+        my >= ICON_ABOUT_Y && my < ICON_ABOUT_Y + ICON_H + ICON_LABEL_H) {
+        open_about_window();
+        start_menu_open = false;
+        return;
+    }
+
+    // Verifica ícone Configurações
+    if (mx >= ICON_CONF_X && mx < ICON_CONF_X + ICON_W &&
+        my >= ICON_CONF_Y && my < ICON_CONF_Y + ICON_H + ICON_LABEL_H) {
+        // Por enquanto, abre a janela Sobre como placeholder
+        open_about_window();
+        start_menu_open = false;
+        return;
+    }
 }
 
 static void run_desktop(void) {
@@ -599,10 +636,13 @@ static void run_desktop(void) {
                     start_menu_open = false;
                 }
             }
-            // Janelas
+            // Ícones do desktop
             else {
-                wm_mouse_down(mx, my);
+                desktop_handle_click(mx, my, sw, sh);
             }
+
+            // Janelas (sempre chamado, mas só age se clique sobre janela)
+            wm_mouse_down(mx, my);
         }
 
         if (pressed && was_pressed) {
