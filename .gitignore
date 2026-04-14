@@ -1,0 +1,11 @@
+# Arquivos de Objeto e Binários
+*.o
+*.elf
+
+# Ignora a imagem final do sistema
+*.iso
+
+iso/boot/haos.elf
+
+*.log
+*.bin
