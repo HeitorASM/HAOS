@@ -9,3 +9,6 @@ iso/boot/haos.elf
 
 *.log
 *.bin
+
+.vscode/
+.idea/
