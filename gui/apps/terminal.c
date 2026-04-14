@@ -1,10 +1,10 @@
-// gui/terminal.c — terminal com shell embutido (input corrigido)
+// gui/apps/terminal.c — terminal com shell embutido (input corrigido)
 #include "terminal.h"
-#include "window.h"
-#include "../drivers/fb.h"
-#include "../drivers/font.h"
-#include "../kernel/memory.h"
-#include "../kernel/types.h"
+#include "../window.h"
+#include "../../drivers/fb.h"
+#include "../../drivers/font.h"
+#include "../../kernel/memory.h"
+#include "../../kernel/types.h"
 
 #define PAD 8
 
@@ -32,7 +32,6 @@ static void term_scroll(TermState* t) {
 static void term_newline(TermState* t) {
     if (t->num_lines >= TERM_HIST) term_scroll(t);
     else t->num_lines++;
-    // Limpa a nova linha
     int row = t->num_lines - 1;
     if (row >= 0 && row < TERM_HIST) kmemset(t->lines[row], 0, TERM_COLS + 1);
 }
@@ -167,14 +166,12 @@ static void term_draw(Window* win) {
         if (line_idx < 0 || line_idx >= TERM_HIST) continue;
         char* text = t->lines[line_idx];
 
-        // Limpa linha
         fb_fill_rect((uint32_t)bx, (uint32_t)ry, (uint32_t)bw, FONT_H, COLOR_TERM_BG);
         if (!text[0]) continue;
 
         if (kstrncmp(text, "haos> ", 6) == 0) {
             fb_draw_string((uint32_t)bx, (uint32_t)ry,
                            "haos> ", COLOR_TERM_PROMPT, 0, true);
-            // O texto após o prompt é um comando executado
             fb_draw_string((uint32_t)(bx + FONT_W*6), (uint32_t)ry,
                            text + 6, COLOR_TERM_CMD, 0, true);
         } else {
@@ -183,7 +180,7 @@ static void term_draw(Window* win) {
         }
     }
 
-    // Linha de input (sempre na última linha visível)
+    // Linha de input
     int input_y = by + (visible_rows - 1) * FONT_H;
     fb_fill_rect((uint32_t)bx, (uint32_t)input_y, (uint32_t)bw, FONT_H, COLOR_TERM_BG);
 
@@ -193,7 +190,6 @@ static void term_draw(Window* win) {
         fb_draw_string((uint32_t)(bx + FONT_W*6), (uint32_t)input_y,
                        t->input, COLOR_TEXT_LIGHT, 0, true);
 
-    // Cursor piscante (bloco fino)
     int cx = bx + FONT_W * (6 + t->input_len);
     uint32_t cur_color = t->cursor_visible ? COLOR_TERM_PROMPT : COLOR_TERM_BG;
     fb_fill_rect((uint32_t)cx, (uint32_t)(input_y + 1), 2, FONT_H - 3, cur_color);
@@ -206,17 +202,13 @@ static void term_key(Window* win, uint8_t c) {
     if (!t) return;
 
     if (c == '\n' || c == '\r') {
-        // Eco
         char echo_line[TERM_COLS + 8];
         kstrcpy(echo_line, "haos> ");
         kstrcat(echo_line, t->input);
         term_println(t, echo_line);
-        // Executa
         term_execute(t, t->input);
-        // Limpa input
         kmemset(t->input, 0, TERM_BUF_SIZE);
         t->input_len = 0;
-
     } else if (c == '\b') {
         if (t->input_len > 0) {
             t->input_len--;

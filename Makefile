@@ -1,5 +1,5 @@
 # ============================================================
-#  HAOS v1.1  —  Makefile
+#  HAOS v1.1  —  Makefile (com nova estrutura de diretórios)
 # ============================================================
 
 CROSS   ?= x86_64-linux-gnu
@@ -15,6 +15,7 @@ CFLAGS   = -ffreestanding -fno-stack-protector -fno-pic        \
            -O2 -Wall -Wextra                                    \
            -Wno-override-init -Wno-unused-variable             \
            -I. -Ikernel -Idrivers -Igui                        \
+           -Igui/screens -Igui/elements -Igui/apps             \
            -m64 -std=c11
 
 LDFLAGS  = -T linker.ld -nostdlib -z max-page-size=0x1000
@@ -24,15 +25,14 @@ NASMFLAGS = -f elf64
 QEMU_AUDIO   = -audiodev none,id=noaudio
 QEMU_MACHINE = -machine pc,accel=tcg
 QEMU_BASE    = -m 256M -vga std -no-reboot $(QEMU_AUDIO) $(QEMU_MACHINE)
-
-# ---- Mouse PS/2 no QEMU: precisa de -usbdevice tablet OU deixar
-#      o PS/2 padrão (que o QEMU emula automaticamente via i8042)
 QEMU_INPUT   = -device ps2-mouse
 
+# ---- Fontes Assembly ----
 ASM_SRCS = boot/boot.asm          \
            kernel/gdt_asm.asm     \
            kernel/idt_asm.asm
 
+# ---- Fontes C (kernel, drivers, gui) ----
 C_SRCS   = kernel/kernel.c        \
            kernel/gdt.c           \
            kernel/idt.c           \
@@ -44,8 +44,16 @@ C_SRCS   = kernel/kernel.c        \
            drivers/font.c         \
            drivers/mouse.c        \
            gui/window.c           \
-           gui/terminal.c         \
-           gui/gui.c
+           gui/gui.c              \
+           gui/screens/boot.c     \
+           gui/screens/welcome.c  \
+           gui/screens/desktop.c  \
+           gui/elements/icons.c   \
+           gui/elements/taskbar.c \
+           gui/elements/startmenu.c \
+           gui/apps/terminal.c    \
+           gui/apps/about.c       \
+           gui/apps/config.c
 
 ASM_OBJS = $(ASM_SRCS:.asm=.o)
 C_OBJS   = $(C_SRCS:.c=.o)
@@ -70,15 +78,12 @@ iso: haos.elf
 	$(GRUB) -o haos.iso iso 2>/dev/null
 	@echo "  [OK] haos.iso gerado"
 
-# GTK (WSL2 com WSLg — melhor opção visual)
 run-gtk: iso
 	$(QEMU) -cdrom haos.iso -boot d $(QEMU_BASE) $(QEMU_INPUT) -display gtk
 
-# SDL sem OpenGL
 run-sdl: iso
 	$(QEMU) -cdrom haos.iso -boot d $(QEMU_BASE) $(QEMU_INPUT) -display sdl,gl=off
 
-# VNC headless
 run-vnc: iso
 	@echo ""
 	@echo "  ============================================="
