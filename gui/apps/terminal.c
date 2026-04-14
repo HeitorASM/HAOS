@@ -1,4 +1,3 @@
-// gui/apps/terminal.c — terminal com shell embutido (input corrigido)
 #include "terminal.h"
 #include "../window.h"
 #include "../../drivers/fb.h"
