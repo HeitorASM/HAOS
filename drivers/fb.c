@@ -3,6 +3,7 @@
 #include "font.h"
 #include "../kernel/types.h"
 #include "../kernel/memory.h"
+#include "utf8cp437.h"
 
 static uint32_t* fb_addr  = NULL;  // framebuffer real (VESA/MMIO)
 static uint32_t* fb_back  = NULL;  // shadow buffer (RAM, desenho aqui)
@@ -207,18 +208,38 @@ void fb_draw_char(uint32_t x, uint32_t y, uint8_t c,
 
 uint32_t fb_text_width(const char* s) {
     uint32_t n = 0;
-    while (*s++) n++;
+    const char* p = s;
+    while (*p) {
+        if ((*p & 0x80) == 0) {
+            // ASCII rápido
+            p++;
+            n++;
+        } else {
+            // Sequência UTF‑8, conta como 1 caractere visual
+            utf8_to_cp437(&p);
+            n++;
+        }
+    }
     return n * FONT_W;
 }
 
 void fb_draw_string(uint32_t x, uint32_t y, const char* s,
                     uint32_t fg, uint32_t bg, bool transparent_bg) {
     uint32_t cx = x;
-    while (*s) {
-        if (*s == '\n') { y += FONT_H; cx = x; }
-        else if (*s == '\t') { cx += FONT_W * 4; }
-        else { fb_draw_char(cx, y, (uint8_t)*s, fg, bg, transparent_bg); cx += FONT_W; }
-        s++;
+    const char* p = s;
+    while (*p) {
+        if (*p == '\n') {
+            y += FONT_H;
+            cx = x;
+            p++;
+        } else if (*p == '\t') {
+            cx += FONT_W * 4;
+            p++;
+        } else {
+            uint8_t cp = utf8_to_cp437(&p);
+            fb_draw_char(cx, y, cp, fg, bg, transparent_bg);
+            cx += FONT_W;
+        }
     }
 }
 
