@@ -1,5 +1,5 @@
 # ============================================================
-#  HAOS v1.1  —  Makefile (com nova estrutura de diretórios)
+#  HAOS v1.1  —  Makefile
 # ============================================================
 
 CROSS   ?= x86_64-linux-gnu
@@ -21,10 +21,10 @@ CFLAGS   = -ffreestanding -fno-stack-protector -fno-pic        \
 LDFLAGS  = -T linker.ld -nostdlib -z max-page-size=0x1000
 NASMFLAGS = -f elf64
 
-# ---- Fix crítico: desabilita PipeWire/PulseAudio no QEMU 8.x ----
+
 QEMU_AUDIO   = -audiodev none,id=noaudio
 QEMU_MACHINE = -machine pc,accel=tcg
-QEMU_BASE    = -m 256M -vga std -no-reboot $(QEMU_AUDIO) $(QEMU_MACHINE)
+QEMU_BASE    = -m 256M -vga std -no-reboot $(QEMU_AUDIO) $(QEMU_MACHINE) -rtc base=localtime
 QEMU_INPUT   = -device ps2-mouse
 
 # ---- Fontes Assembly ----
@@ -44,6 +44,7 @@ C_SRCS   = kernel/kernel.c        \
            drivers/utf8cp437.c    \
            drivers/font.c         \
            drivers/mouse.c        \
+           drivers/rtc.c          \
            gui/window.c           \
            gui/gui.c              \
            gui/screens/boot.c     \

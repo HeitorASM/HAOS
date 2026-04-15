@@ -4,6 +4,7 @@
 #include "../../drivers/font.h"
 #include "../../kernel/memory.h"
 #include "../../kernel/types.h"
+#include "../../drivers/rtc.h" 
 
 #define PAD 8
 
@@ -96,7 +97,23 @@ static void cmd_ls(TermState* t) {
 }
 
 static void cmd_date(TermState* t) {
-    term_println(t, "  Data: --/--/-- (RTC nao implementado em v1.1)");
+    rtc_time_t rt;
+    rtc_read_time(&rt);
+
+    char date_buf[12];
+    rtc_format_date(date_buf, &rt);   // "DD/MM/AAAA"
+    char time_buf[9];
+    rtc_format_time(time_buf, &rt);   // "HH:MM:SS"
+
+    char line[TERM_COLS + 1];
+    // Exemplo: "Data: 15/04/2026 14:30:45"
+    kmemset(line, 0, sizeof(line));
+    kstrcpy(line, "  Data: ");
+    kstrcat(line, date_buf);
+    kstrcat(line, " ");
+    kstrcat(line, time_buf);
+
+    term_println(t, line);
 }
 
 static void cmd_mem(TermState* t) {

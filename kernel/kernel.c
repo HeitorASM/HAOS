@@ -1,4 +1,3 @@
-// kernel/kernel.c — entrada principal do kernel HAOS
 #include "types.h"
 #include "gdt.h"
 #include "idt.h"
@@ -8,6 +7,7 @@
 #include "memory.h"
 #include "../drivers/fb.h"
 #include "../drivers/mouse.h"
+#include "../drivers/rtc.h"       // <-- NOVO
 #include "../gui/gui.h"
 
 #define MB2_MAGIC  0x36D76289U
@@ -94,7 +94,10 @@ void kernel_main(uint32_t magic, uint32_t mb_info_raw) {
     // 10. Inicializa mouse PS/2
     mouse_init();
 
-    // 11. Inicia GUI (não retorna)
+    // 11. Inicializa RTC (Real-Time Clock)    <-- NOVO
+    rtc_init();
+
+    // 12. Inicia GUI (não retorna)
     gui_init();
     gui_run();
 

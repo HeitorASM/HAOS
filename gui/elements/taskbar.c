@@ -1,9 +1,10 @@
-// gui/elements/taskbar.c — barra de tarefas
 #include "taskbar.h"
 #include "../../drivers/fb.h"
 #include "../../drivers/font.h"
+#include "../../drivers/rtc.h"          // <-- NOVO
 
 void draw_taskbar(uint64_t ticks, bool start_menu_open, bool terminal_active) {
+    (void)ticks;  // não usamos mais ticks para o relógio
     uint32_t sw = fb_width(), sh = fb_height();
     uint32_t ty = sh - TASKBAR_H;
 
@@ -22,25 +23,17 @@ void draw_taskbar(uint64_t ticks, bool start_menu_open, bool terminal_active) {
     // Botão do terminal
     int ax = START_BTN_W + 12;
     if (terminal_active) {
-        // Obtém foco via wm_get_focused (mas aqui usamos apenas uma cor estática)
-        uint32_t tbtn = 0x0C1220; // simplificado
+        uint32_t tbtn = 0x0C1220;
         fb_draw_rounded_rect((uint32_t)ax, ty + 5, 130, TASKBAR_H - 10, tbtn, 4);
         fb_draw_string_centered((uint32_t)ax, ty + 5, 130, TASKBAR_H - 10,
                                  "Terminal", COLOR_TEXT_LIGHT, 0, true);
     }
 
-    // Relógio digital
-    char tbuf[12];
-    uint64_t secs  = ticks / 100;
-    uint64_t mins  = secs  / 60;
-    uint64_t hours = mins  / 60;
-    secs  %= 60; mins %= 60; hours %= 24;
-    tbuf[0] = '0' + (char)(hours/10); tbuf[1] = '0' + (char)(hours%10);
-    tbuf[2] = ':';
-    tbuf[3] = '0' + (char)(mins/10);  tbuf[4] = '0' + (char)(mins%10);
-    tbuf[5] = ':';
-    tbuf[6] = '0' + (char)(secs/10);  tbuf[7] = '0' + (char)(secs%10);
-    tbuf[8] = 0;
+    // Relógio digital (RTC real)
+    rtc_time_t rt;
+    rtc_read_time(&rt);
+    char tbuf[9];
+    rtc_format_time(tbuf, &rt);    // "HH:MM:SS"
 
     uint32_t clock_x = sw - CLOCK_W - 8;
     fb_draw_rounded_rect(clock_x - 4, ty + 5, CLOCK_W + 8, TASKBAR_H - 10,
