@@ -1,9 +1,10 @@
+// gui/gui.c — máquina de estados: BOOT → WELCOME → DESKTOP
 #include "gui.h"
 #include "window.h"
 #include "screens/boot.h"
 #include "screens/welcome.h"
 #include "screens/desktop.h"
-#include "../kernel/keyboard.h"   
+#include "../kernel/keyboard.h"   // <-- CORRIGIDO
 #include "../drivers/mouse.h"
 #include "../kernel/types.h"
 
