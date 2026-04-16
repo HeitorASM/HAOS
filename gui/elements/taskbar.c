@@ -1,7 +1,7 @@
 #include "taskbar.h"
 #include "../../drivers/fb.h"
 #include "../../drivers/font.h"
-#include "../../drivers/rtc.h"          // <-- NOVO
+#include "../../drivers/rtc.h"         
 
 void draw_taskbar(uint64_t ticks, bool start_menu_open, bool terminal_active) {
     (void)ticks;  // não usamos mais ticks para o relógio

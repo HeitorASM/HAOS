@@ -1,4 +1,3 @@
-// kernel/pit.c — PIT 8253/8254: configura timer a ~100 Hz
 #include "pit.h"
 #include "types.h"
 

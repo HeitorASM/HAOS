@@ -1,4 +1,3 @@
-// gui/window.c — gerenciador de janelas com drag e visual melhorado
 #include "window.h"
 #include "../drivers/fb.h"
 #include "../drivers/font.h"

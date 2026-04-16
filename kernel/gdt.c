@@ -1,4 +1,3 @@
-// kernel/gdt.c — Global Descriptor Table (64-bit)
 #include "gdt.h"
 #include "types.h"
 

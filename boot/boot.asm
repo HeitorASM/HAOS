@@ -1,6 +1,6 @@
 ; ============================================================
-;  HAOS  —  boot/boot.asm  (corrigido: identity map 4GB)
-;  Multiboot2 header + transição 32-bit → 64-bit (Long Mode)
+;  HAOS 
+;  Multiboot2 header + transição 32-bit → 64-bit
 ; ============================================================
 
 bits 32

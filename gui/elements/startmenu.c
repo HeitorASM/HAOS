@@ -1,4 +1,3 @@
-// gui/elements/startmenu.c — menu iniciar
 #include "startmenu.h"
 #include "taskbar.h"
 #include "../../drivers/fb.h"

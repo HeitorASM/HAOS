@@ -1,4 +1,3 @@
-// gui/elements/icons.c — ícones do desktop
 #include "icons.h"
 #include "../../drivers/fb.h"
 #include "../../drivers/font.h"

@@ -1,4 +1,3 @@
-// gui/screens/welcome.c — tela de boas-vindas
 #include "welcome.h"
 #include "../../drivers/fb.h"
 #include "../../drivers/font.h"

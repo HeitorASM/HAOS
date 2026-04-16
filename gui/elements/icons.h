@@ -1,6 +1,5 @@
-// gui/elements/icons.h
 #pragma once
-#include "../../kernel/types.h"   // <-- substitui <stdint.h>
+#include "../../kernel/types.h"   
 
 #define ICON_W        56
 #define ICON_H        48

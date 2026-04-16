@@ -1,4 +1,3 @@
-// kernel/pic.c — 8259A PIC: remapeia IRQs 0–15 para INT 0x20–0x2F
 #include "pic.h"
 #include "types.h"
 

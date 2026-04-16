@@ -1,4 +1,3 @@
-// kernel/memory.c — alocador bump
 #include "memory.h"
 #include "types.h"
 
