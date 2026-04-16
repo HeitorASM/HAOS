@@ -7,8 +7,9 @@
 #include "memory.h"
 #include "../drivers/fb.h"
 #include "../drivers/mouse.h"
-#include "../drivers/rtc.h"       // <-- NOVO
+#include "../drivers/rtc.h"       
 #include "../gui/gui.h"
+#include "../fs/vfs.h"
 
 #define MB2_MAGIC  0x36D76289U
 #define MB2_TAG_FB 8
@@ -36,21 +37,21 @@ static void kpanic(const char* msg) {
 }
 
 void kernel_main(uint32_t magic, uint32_t mb_info_raw) {
-    // 1. GDT
+    // GDT
     gdt_init();
 
-    // 2. IDT + interrupções
+    // IDT + interrupções
     idt_init();
     pic_init();
     pit_init(100);   // 100 Hz
 
-    // 3. Teclado e Mouse
+    // Teclado e Mouse
     keyboard_init();
 
-    // 4. Habilita interrupções
+    // Habilita interrupções
     __asm__ volatile("sti");
 
-    // 5. Verifica Multiboot2
+    // Verifica Multiboot2
     if (magic != MB2_MAGIC)
         kpanic("Nao iniciado via Multiboot2!");
 
@@ -78,26 +79,24 @@ void kernel_main(uint32_t magic, uint32_t mb_info_raw) {
     if (fb_addr == 0)
         kpanic("Framebuffer nao encontrado no Multiboot2!");
 
-    // 7. Inicializa framebuffer
+    // Inicializa framebuffer
     fb_init(fb_addr, fb_w, fb_h, fb_pitch);
 
-    // 8. Inicializa heap
+    // Inicializa heap
     memory_init();
 
-    // 9. Aloca shadow buffer (double buffering) + cache de fundo
     uint32_t fb_bytes = fb_h * fb_pitch;
     void* shadow = kmalloc(fb_bytes);
     void* bgcache = kmalloc(fb_bytes);
     if (shadow)  fb_set_backbuffer(shadow);
     if (bgcache) fb_set_bg_cache(bgcache);
 
-    // 10. Inicializa mouse PS/2
     mouse_init();
 
-    // 11. Inicializa RTC (Real-Time Clock)    <-- NOVO
     rtc_init();
 
-    // 12. Inicia GUI (não retorna)
+    vfs_init();
+
     gui_init();
     gui_run();
 

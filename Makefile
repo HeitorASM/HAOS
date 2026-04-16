@@ -14,7 +14,7 @@ CFLAGS   = -ffreestanding -fno-stack-protector -fno-pic        \
            -nostdlib -nodefaultlibs                             \
            -O2 -Wall -Wextra                                    \
            -Wno-override-init -Wno-unused-variable             \
-           -I. -Ikernel -Idrivers -Igui                        \
+           -I. -Ikernel -Idrivers -Igui -Ifs                  \
            -Igui/screens -Igui/elements -Igui/apps             \
            -m64 -std=c11
 
@@ -55,7 +55,8 @@ C_SRCS   = kernel/kernel.c        \
            gui/elements/startmenu.c \
            gui/apps/terminal.c    \
            gui/apps/about.c       \
-           gui/apps/config.c
+           gui/apps/config.c      \
+           fs/vfs.c
 
 ASM_OBJS = $(ASM_SRCS:.asm=.o)
 C_OBJS   = $(C_SRCS:.c=.o)
