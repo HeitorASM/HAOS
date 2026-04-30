@@ -15,3 +15,5 @@ iso/boot/haos.elf
 
 .venv/
 venv/
+
+assets/wallpapers/
