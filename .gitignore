@@ -12,3 +12,6 @@ iso/boot/haos.elf
 
 .vscode/
 .idea/
+
+.venv/
+venv/
