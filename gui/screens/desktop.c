@@ -12,6 +12,7 @@
 #include "../../drivers/mouse.h"
 #include "../../kernel/types.h"
 #include "../../kernel/memory.h"
+#include "../wallpaper.h"
 
 extern volatile uint64_t timer_ticks;
 
@@ -111,6 +112,7 @@ static void desktop_handle_click(int32_t mx, int32_t my, uint32_t sw, uint32_t s
 void run_desktop(void) {
     uint32_t sw = fb_width(), sh = fb_height();
     mouse_set_bounds((int32_t)sw - 1, (int32_t)sh - 1);
+    wallpaper_init();
 
     terminal_win = terminal_create((int32_t)(sw/2 - 340),
                                    (int32_t)(sh/2 - 200));
@@ -196,13 +198,8 @@ void run_desktop(void) {
         if (terminal_win)
             terminal_tick(terminal_win, ticks);
 
-        // Fundo
-        fb_fill_gradient_v(0, 0, sw, sh - TASKBAR_H, COLOR_BG, 0x0B1020);
-        for (uint32_t gy = 0; gy < (sh - TASKBAR_H); gy += 32)
-            for (uint32_t gx = 0; gx < sw; gx += 32)
-                fb_put_pixel(gx, gy, 0x0F1828);
-        fb_draw_string_centered(0, sh/2 - 60, sw, 20,
-                                 "HAOS Desktop", 0x111E30, 0, true);
+        // Fundo (wallpaper ou gradiente padrão)
+        wallpaper_draw(sw, sh);
 
         draw_desktop_icons();
         wm_draw_all();
