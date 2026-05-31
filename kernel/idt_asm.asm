@@ -3,16 +3,21 @@ bits 64
 
 ; ---- Exporta variáveis globais -----------------------------------
 global timer_ticks
-global kb_scancode
-global kb_ready
+global keyboard_buf
+global keyboard_hd
+global keyboard_tl
 global mouse_buf
 global mouse_hd
 global mouse_tl
 
 section .bss
 timer_ticks:  resq 1      ; contador de ticks do timer (100Hz)
-kb_scancode:  resb 1      ; último scancode do teclado
-kb_ready:     resb 1      ; 1 = novo scancode disponível
+
+; Ring buffer para scancodes do teclado (32 slots)
+keyboard_buf: resb 32
+keyboard_hd:  resb 1      ; head (escrito pela ISR)
+keyboard_tl:  resb 1      ; tail (lido pelo C)
+
 ; Ring buffer para bytes crus do mouse (32 slots)
 mouse_buf:    resb 32
 mouse_hd:     resb 1      ; head (escrito pela ISR)
@@ -36,11 +41,19 @@ irq0_handler:
 ; ---- Teclado IRQ1 (INT 33) ---------------------------------------
 irq1_handler:
     push rax
-    in   al, 0x60
-    mov  [kb_scancode], al
-    mov  byte [kb_ready], 1
+    push rbx
+    in   al, 0x60           ; lê o scancode
+    movzx rbx, byte [keyboard_hd]
+    mov  [keyboard_buf + rbx], al
+    inc  bl
+    and  bl, 31
+    cmp  bl, byte [keyboard_tl]
+    je   .skip_adv
+    mov  [keyboard_hd], bl
+.skip_adv:
     mov  al, 0x20
     out  0x20, al           ; EOI master PIC
+    pop  rbx
     pop  rax
     iretq
 
@@ -54,9 +67,9 @@ irq12_handler:
     inc  bl
     and  bl, 31
     cmp  bl, byte [mouse_tl]
-    je   .skip_adv
+    je   .skip_adv_mouse
     mov  [mouse_hd], bl
-.skip_adv:
+.skip_adv_mouse:
     mov  al, 0x20
     out  0xA0, al           ; EOI slave PIC
     out  0x20, al           ; EOI master PIC

@@ -5,9 +5,10 @@
 #include "pit.h"
 #include "keyboard.h"
 #include "memory.h"
+#include "sysinfo.h"
 #include "../drivers/fb.h"
 #include "../drivers/mouse.h"
-#include "../drivers/rtc.h"       
+#include "../drivers/rtc.h"
 #include "../gui/gui.h"
 #include "../fs/vfs.h"
 
@@ -43,7 +44,7 @@ void kernel_main(uint32_t magic, uint32_t mb_info_raw) {
     // IDT + interrupções
     idt_init();
     pic_init();
-    pit_init(100);   // 100 Hz
+    pit_init(100);
 
     // Teclado e Mouse
     keyboard_init();
@@ -55,7 +56,10 @@ void kernel_main(uint32_t magic, uint32_t mb_info_raw) {
     if (magic != MB2_MAGIC)
         kpanic("Nao iniciado via Multiboot2!");
 
-    // 6. Percorre tags para encontrar o framebuffer
+    // Inicializa a memória PRIMEIRO
+    memory_init(mb_info_raw);
+
+    // Percorre tags para encontrar o framebuffer
     uint8_t* ptr = (uint8_t*)(uintptr_t)(mb_info_raw + 8);
     MB2Tag*  tag = (MB2Tag*)ptr;
 
@@ -82,19 +86,18 @@ void kernel_main(uint32_t magic, uint32_t mb_info_raw) {
     // Inicializa framebuffer
     fb_init(fb_addr, fb_w, fb_h, fb_pitch);
 
-    // Inicializa heap
-    memory_init();
+    // Inicializa deteção de hardware
+    sysinfo_init();
 
+    // Aloca buffers de vídeo na heap real
     uint32_t fb_bytes = fb_h * fb_pitch;
-    void* shadow = kmalloc(fb_bytes);
+    void* shadow  = kmalloc(fb_bytes);
     void* bgcache = kmalloc(fb_bytes);
     if (shadow)  fb_set_backbuffer(shadow);
     if (bgcache) fb_set_bg_cache(bgcache);
 
     mouse_init();
-
     rtc_init();
-
     vfs_init();
 
     gui_init();

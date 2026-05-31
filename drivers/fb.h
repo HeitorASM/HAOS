@@ -1,5 +1,10 @@
+// drivers/fb.h
 #pragma once
 #include "../kernel/types.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 // ---- Paleta de cores (formato 0x00RRGGBB) ----------------------
 #define COLOR_BLACK        0x000000
@@ -87,3 +92,7 @@ void fb_draw_cursor(uint32_t x, uint32_t y);
 // ---- Cache do fundo (para restaurar background sem recomputar) --
 void fb_save_bg(void);     // snapshot do shadow buffer → cache
 void fb_restore_bg(void);  // restaura cache → shadow buffer
+
+#ifdef __cplusplus
+}
+#endif
