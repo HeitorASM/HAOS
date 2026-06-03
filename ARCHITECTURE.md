@@ -1,6 +1,3 @@
-
-# Conteúdo dedicado estritamente aos diagramas e arquitetura detalhada
-
 Este arquivo centraliza a modelagem de engenharia e diagramas de sequência do **HAOS**. Se você deseja entender como o sistema gerencia o hardware e renderiza componentes de software sob uma ótica interna, este guia descreve esses fluxos de maneira clara.
 
 ---
