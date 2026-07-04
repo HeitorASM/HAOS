@@ -53,11 +53,6 @@ O HAOS é um sistema operacional bare-metal de 64 bits desenvolvido de forma ind
 
 
 ```
-
-```text
-Arquivos gerados com sucesso!
-
-```text
 haos/
 ├── boot/           # Código de inicialização e transição para Long Mode (ASM)
 ├── kernel/         # Núcleo: GDT, IDT, PIC, PIT, teclado, memória (KernelHeap C++), RTC
