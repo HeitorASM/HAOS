@@ -6,6 +6,7 @@
 #include "keyboard.h"
 #include "memory.h"
 #include "sysinfo.h"
+#include "lang.h"
 #include "../drivers/fb.h"
 #include "../drivers/mouse.h"
 #include "../drivers/rtc.h"
@@ -99,6 +100,7 @@ void kernel_main(uint32_t magic, uint32_t mb_info_raw) {
     mouse_init();
     rtc_init();
     vfs_init();
+    lang_init();
 
     gui_init();
     gui_run();

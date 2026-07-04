@@ -12,6 +12,7 @@
 #include "../../drivers/mouse.h"
 #include "../../kernel/types.h"
 #include "../../kernel/memory.h"
+#include "../../kernel/lang.h"
 #include "../wallpaper.h"
 
 extern volatile uint64_t timer_ticks;
@@ -148,9 +149,9 @@ void run_desktop(void) {
             }
             // Menu Iniciar
             else if (start_menu_open) {
-                uint32_t mh = 240;
+                uint32_t mh = 244;
                 uint32_t menu_x = 4, menu_y = sh - TASKBAR_H - mh;
-                if (mx >= (int32_t)menu_x && mx < (int32_t)(menu_x + 200)) {
+                if (mx >= (int32_t)menu_x && mx < (int32_t)(menu_x + 210)) {
                     int rel_y = my - (int32_t)menu_y - 50;
                     int item = rel_y / 34;
                     if (item == 0) {  // Terminal
@@ -210,7 +211,7 @@ void run_desktop(void) {
 
         if (!start_menu_open) {
             fb_draw_string(START_BTN_W + 14, sh - TASKBAR_H + 13,
-                           "[S] Menu  [T] Terminal  [A] Sobre  [C] Config",
+                           tr(STR_DESKTOP_HINT_BAR),
                            COLOR_TEXT_DIM, 0, true);
         }
 

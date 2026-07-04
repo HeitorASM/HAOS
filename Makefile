@@ -56,6 +56,7 @@ C_SRCS   = kernel/kernel.c        \
            kernel/pic.c           \
            kernel/pit.c           \
            kernel/keyboard.c      \
+           kernel/lang.c          \
            drivers/fb.c           \
            drivers/utf8cp437.c    \
            drivers/font.c         \

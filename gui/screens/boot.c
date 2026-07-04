@@ -4,6 +4,7 @@
 #include "../../kernel/keyboard.h"   
 #include "../../drivers/mouse.h"
 #include "../../kernel/types.h"
+#include "../../kernel/lang.h"
 
 extern volatile uint64_t timer_ticks;
 
@@ -62,15 +63,15 @@ static void draw_boot_screen(int progress) {
 
     // Subtítulo
     fb_draw_string_centered(0, sh/2 + 20, sw, 18,
-                             "Home-built Operating System  v1.1",
-                             0x4466AA, COLOR_BOOT_BG, false);
+                             tr(STR_BOOT_SUBTITLE),
+                             0x5A80C0, COLOR_BOOT_BG, false);
 
     // Barra de progresso estilizada
     uint32_t bw = 320, bh = 6;
     uint32_t bx = (sw - bw) / 2, by = sh - 80;
 
-    fb_draw_rounded_rect(bx - 1, by - 1, bw + 2, bh + 2, 0x1A2840, 3);
-    fb_fill_rect(bx, by, bw, bh, 0x080E18);
+    fb_draw_rounded_rect(bx - 1, by - 1, bw + 2, bh + 2, 0x223A66, 3);
+    fb_fill_rect(bx, by, bw, bh, 0x0A1220);
 
     int filled = (progress * (int)bw) / PROGRESS_STEPS;
     if (filled > 0)
@@ -82,26 +83,13 @@ static void draw_boot_screen(int progress) {
 
     // Mensagens de status
     const char* msgs[PROGRESS_STEPS] = {
-        "Inicializando hardware...",
-        "Configurando GDT...",
-        "Carregando IDT...",
-        "Inicializando PIC...",
-        "Configurando timer 100Hz...",
-        "Detectando memória...",
-        "Alocando shadow buffer...",
-        "Carregando drivers...",
-        "Inicializando teclado PS/2...",
-        "Inicializando mouse PS/2...",
-        "Inicializando GUI...",
-        "Carregando gerenciador de janelas...",
-        "Preparando área de trabalho...",
-        "Renderizando fundo...",
-        "Aplicando paleta de cores...",
-        "Compilando ícones...",
-        "Iniciando serviços...",
-        "Carregando terminal...",
-        "Finalizando inicialização...",
-        "Bem-vindo ao HAOS!",
+        tr(STR_BOOT_MSG_00), tr(STR_BOOT_MSG_01), tr(STR_BOOT_MSG_02),
+        tr(STR_BOOT_MSG_03), tr(STR_BOOT_MSG_04), tr(STR_BOOT_MSG_05),
+        tr(STR_BOOT_MSG_06), tr(STR_BOOT_MSG_07), tr(STR_BOOT_MSG_08),
+        tr(STR_BOOT_MSG_09), tr(STR_BOOT_MSG_10), tr(STR_BOOT_MSG_11),
+        tr(STR_BOOT_MSG_12), tr(STR_BOOT_MSG_13), tr(STR_BOOT_MSG_14),
+        tr(STR_BOOT_MSG_15), tr(STR_BOOT_MSG_16), tr(STR_BOOT_MSG_17),
+        tr(STR_BOOT_MSG_18), tr(STR_BOOT_MSG_19),
     };
 
     int idx = progress < PROGRESS_STEPS ? progress : PROGRESS_STEPS - 1;

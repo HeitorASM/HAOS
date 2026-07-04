@@ -159,13 +159,13 @@ void wm_draw_window(Window* win) {
     fb_draw_rounded_rect(x, y, w, h, border_col, 6);
 
     // --- Barra de título: gradiente do azul escuro ao médio
-    uint32_t tc1 = win->focused ? 0x1A3A70 : 0x252535;
-    uint32_t tc2 = win->focused ? 0x0D1E40 : 0x141420;
+    uint32_t tc1 = win->focused ? 0x224A8C : 0x282838;
+    uint32_t tc2 = win->focused ? 0x102450 : 0x181828;
     fb_fill_gradient_v(x + WIN_BORDER, y + WIN_BORDER,
                        w - WIN_BORDER*2, TITLE_BAR_H, tc1, tc2);
 
     // Linha brilhante no topo da titlebar
-    uint32_t shine = win->focused ? 0x3A6ABB : 0x303048;
+    uint32_t shine = win->focused ? 0x4A80D0 : 0x3A3A50;
     fb_fill_rect(x + WIN_BORDER, y + WIN_BORDER,
                  w - WIN_BORDER*2, 1, shine);
 

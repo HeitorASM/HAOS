@@ -6,6 +6,7 @@
 #include "../../kernel/types.h"
 #include "../../drivers/rtc.h"
 #include "../../fs/vfs.h"
+#include "../../kernel/lang.h"
 
 #define PAD 8
 
@@ -84,37 +85,38 @@ static void parse_command(const char* input, char* cmd_out, size_t cmd_size, con
 
 
 static void cmd_help(TermState* t) {
-    term_println(t, "Comandos do HAOS Shell:");
-    term_println(t, "  help          -- esta ajuda");
-    term_println(t, "  clear         -- limpa a tela");
-    term_println(t, "  echo <texto>  -- imprime texto");
-    term_println(t, "  about         -- sobre o HAOS");
-    term_println(t, "  date          -- data/hora atual");
-    term_println(t, "  mem           -- informacoes de memoria");
-    term_println(t, "  reboot        -- reinicia o sistema");
+    term_println(t, tr(STR_TERM_HELP_HEADER));
+    term_println(t, tr(STR_TERM_HELP_HELP));
+    term_println(t, tr(STR_TERM_HELP_CLEAR));
+    term_println(t, tr(STR_TERM_HELP_ECHO));
+    term_println(t, tr(STR_TERM_HELP_ABOUT));
+    term_println(t, tr(STR_TERM_HELP_DATE));
+    term_println(t, tr(STR_TERM_HELP_MEM));
+    term_println(t, tr(STR_TERM_HELP_REBOOT));
+    term_println(t, tr(STR_TERM_HELP_LANG));
     term_println(t, "");
-    term_println(t, "Sistema de Arquivos:");
-    term_println(t, "  pwd           -- diretorio atual");
-    term_println(t, "  ls [dir]      -- lista arquivos");
-    term_println(t, "  cd <dir>      -- muda diretorio");
-    term_println(t, "  mkdir <nome>  -- cria diretorio");
-    term_println(t, "  touch <nome>  -- cria arquivo vazio");
-    term_println(t, "  cat <arq>     -- exibe conteudo");
-    term_println(t, "  write <arq> <texto> -- escreve em arquivo");
-    term_println(t, "  append <arq> <texto> -- acrescenta ao arquivo");
-    term_println(t, "  rm <nome>     -- remove arquivo/diretorio");
-    term_println(t, "  stat <nome>   -- informacoes do arquivo");
+    term_println(t, tr(STR_TERM_HELP_FS_HEADER));
+    term_println(t, tr(STR_TERM_HELP_PWD));
+    term_println(t, tr(STR_TERM_HELP_LS));
+    term_println(t, tr(STR_TERM_HELP_CD));
+    term_println(t, tr(STR_TERM_HELP_MKDIR));
+    term_println(t, tr(STR_TERM_HELP_TOUCH));
+    term_println(t, tr(STR_TERM_HELP_CAT));
+    term_println(t, tr(STR_TERM_HELP_WRITE));
+    term_println(t, tr(STR_TERM_HELP_APPEND));
+    term_println(t, tr(STR_TERM_HELP_RM));
+    term_println(t, tr(STR_TERM_HELP_STAT));
 }
 
 static void cmd_about(TermState* t) {
     term_println(t, "");
-    term_println(t, "  HAOS v1.2 -- Home-built OS");
-    term_println(t, "  Arquitetura : x86-64 (Long Mode)");
-    term_println(t, "  Boot        : GRUB2 + Multiboot2");
-    term_println(t, "  Video       : VESA VBE 1024x768 32bpp");
-    term_println(t, "  GUI         : double-buffered framebuffer");
-    term_println(t, "  Input       : PS/2 Keyboard + Mouse");
-    term_println(t, "  FS          : HAOS-VFS (heap tree)");
+    term_println(t, tr(STR_TERM_ABOUT_TITLE));
+    term_println(t, tr(STR_TERM_ABOUT_ARCH));
+    term_println(t, tr(STR_TERM_ABOUT_BOOT));
+    term_println(t, tr(STR_TERM_ABOUT_VIDEO));
+    term_println(t, tr(STR_TERM_ABOUT_GUI));
+    term_println(t, tr(STR_TERM_ABOUT_INPUT));
+    term_println(t, tr(STR_TERM_ABOUT_FS));
     term_println(t, "");
 }
 
@@ -129,24 +131,37 @@ static void cmd_date(TermState* t) {
 
     char line[TERM_COLS + 1];
     kmemset(line, 0, sizeof(line));
-    kstrcpy(line, "  Data: ");
+    kstrcpy(line, tr(STR_TERM_DATE_LABEL));
     kstrcat(line, date_buf);
-    kstrcat(line, "  Hora: ");
+    kstrcat(line, tr(STR_TERM_TIME_LABEL));
     kstrcat(line, time_buf);
     term_println(t, line);
 }
 
 static void cmd_mem(TermState* t) {
-    term_println(t, "  Heap: 12 MB (bump allocator)");
-    term_println(t, "  Shadow buffer: ~3 MB (double buffering)");
-    term_println(t, "  BG cache: ~3 MB");
-    term_println(t, "  VFS: alocado na heap");
+    term_println(t, tr(STR_TERM_MEM_HEAP));
+    term_println(t, tr(STR_TERM_MEM_SHADOW));
+    term_println(t, tr(STR_TERM_MEM_BGCACHE));
+    term_println(t, tr(STR_TERM_MEM_VFS));
 }
 
 static void cmd_reboot(TermState* t) {
     (void)t;
     outb(0x64, 0xFE);
     while(1) __asm__("hlt");
+}
+
+static void cmd_lang(TermState* t, const char* arg) {
+    while (*arg == ' ') arg++;
+    if (kstrcmp(arg, "pt") == 0) {
+        lang_set(LANG_PT);
+        term_println(t, tr(STR_TERM_LANG_SET_PT));
+    } else if (kstrcmp(arg, "en") == 0) {
+        lang_set(LANG_EN);
+        term_println(t, tr(STR_TERM_LANG_SET_EN));
+    } else {
+        term_println(t, tr(STR_TERM_LANG_USAGE));
+    }
 }
 
 // ---- Comandos de FS -----------------------------------------
@@ -161,12 +176,12 @@ static void cmd_ls(TermState* t, const char* path_arg) {
     VfsNode* dir;
     if (path_arg && path_arg[0]) {
         dir = vfs_resolve(vfs_cwd(), path_arg);
-        if (!dir) { term_println(t, "ls: diretorio nao encontrado"); return; }
-        if (dir->type != VFS_DIR) { term_println(t, "ls: nao e um diretorio"); return; }
+        if (!dir) { term_println(t, tr(STR_TERM_LS_DIR_NOT_FOUND)); return; }
+        if (dir->type != VFS_DIR) { term_println(t, tr(STR_TERM_LS_NOT_A_DIR)); return; }
     } else {
         dir = vfs_cwd();
     }
-    if (dir->child_count == 0) { term_println(t, "  (diretorio vazio)"); return; }
+    if (dir->child_count == 0) { term_println(t, tr(STR_TERM_LS_EMPTY)); return; }
 
     for (uint32_t i = 0; i < dir->child_count; i++) {
         VfsNode* child = dir->children[i];
@@ -194,29 +209,29 @@ static void cmd_cd(TermState* t, const char* path_arg) {
         return;
     }
     VfsNode* target = vfs_resolve(vfs_cwd(), path_arg);
-    if (!target) { term_println(t, "cd: diretorio nao encontrado"); return; }
-    if (target->type != VFS_DIR) { term_println(t, "cd: nao e um diretorio"); return; }
+    if (!target) { term_println(t, tr(STR_TERM_CD_NOT_FOUND)); return; }
+    if (target->type != VFS_DIR) { term_println(t, tr(STR_TERM_CD_NOT_A_DIR)); return; }
     vfs_set_cwd(target);
 }
 
 static void cmd_mkdir(TermState* t, const char* name) {
-    if (!name || !name[0]) { term_println(t, "mkdir: nome necessario"); return; }
+    if (!name || !name[0]) { term_println(t, tr(STR_TERM_MKDIR_NEED_NAME)); return; }
     VfsNode* n = vfs_mkdir(vfs_cwd(), name);
-    if (!n) term_println(t, "mkdir: falha (ja existe ou limite atingido)");
+    if (!n) term_println(t, tr(STR_TERM_MKDIR_FAILED));
 }
 
 static void cmd_touch(TermState* t, const char* name) {
-    if (!name || !name[0]) { term_println(t, "touch: nome necessario"); return; }
+    if (!name || !name[0]) { term_println(t, tr(STR_TERM_TOUCH_NEED_NAME)); return; }
     VfsNode* n = vfs_touch(vfs_cwd(), name);
-    if (!n) term_println(t, "touch: falha ao criar arquivo");
+    if (!n) term_println(t, tr(STR_TERM_TOUCH_FAILED));
 }
 
 static void cmd_cat(TermState* t, const char* name) {
-    if (!name || !name[0]) { term_println(t, "cat: nome necessario"); return; }
+    if (!name || !name[0]) { term_println(t, tr(STR_TERM_CAT_NEED_NAME)); return; }
     VfsNode* node = vfs_resolve(vfs_cwd(), name);
-    if (!node) { term_println(t, "cat: arquivo nao encontrado"); return; }
-    if (node->type == VFS_DIR) { term_println(t, "cat: e um diretorio"); return; }
-    if (!node->data || node->size == 0) { term_println(t, "(arquivo vazio)"); return; }
+    if (!node) { term_println(t, tr(STR_TERM_CAT_NOT_FOUND)); return; }
+    if (node->type == VFS_DIR) { term_println(t, tr(STR_TERM_CAT_IS_DIR)); return; }
+    if (!node->data || node->size == 0) { term_println(t, tr(STR_TERM_CAT_EMPTY)); return; }
     const char* p = node->data;
     char line[TERM_COLS + 1];
     int li = 0;
@@ -236,7 +251,7 @@ static void cmd_cat(TermState* t, const char* name) {
 static void cmd_write(TermState* t, const char* rest) {
     // rest já contém "<arq> <texto>"
     while (*rest == ' ') rest++;
-    if (!*rest) { term_println(t, "write: uso: write <arq> <texto>"); return; }
+    if (!*rest) { term_println(t, tr(STR_TERM_WRITE_USAGE)); return; }
     
     // Extrai nome do arquivo (primeira palavra)
     char fname[VFS_NAME_MAX];
@@ -249,20 +264,20 @@ static void cmd_write(TermState* t, const char* rest) {
     // Pula espaços para chegar ao texto
     while (*rest == ' ') rest++;
     
-    if (!fname[0]) { term_println(t, "write: nome vazio"); return; }
+    if (!fname[0]) { term_println(t, tr(STR_TERM_WRITE_EMPTY_NAME)); return; }
     
     VfsNode* node = vfs_resolve(vfs_cwd(), fname);
     if (!node) node = vfs_touch(vfs_cwd(), fname);
-    if (!node || node->type != VFS_FILE) { term_println(t, "write: nao e um arquivo"); return; }
+    if (!node || node->type != VFS_FILE) { term_println(t, tr(STR_TERM_WRITE_NOT_A_FILE)); return; }
     
     vfs_write(node, rest);
     vfs_append(node, "\n");
-    term_println(t, "  escrito.");
+    term_println(t, tr(STR_TERM_WRITE_DONE));
 }
 
 static void cmd_append(TermState* t, const char* rest) {
     while (*rest == ' ') rest++;
-    if (!*rest) { term_println(t, "append: uso: append <arq> <texto>"); return; }
+    if (!*rest) { term_println(t, tr(STR_TERM_APPEND_USAGE)); return; }
     
     char fname[VFS_NAME_MAX];
     int fi = 0;
@@ -275,45 +290,45 @@ static void cmd_append(TermState* t, const char* rest) {
     
     VfsNode* node = vfs_resolve(vfs_cwd(), fname);
     if (!node) node = vfs_touch(vfs_cwd(), fname);
-    if (!node || node->type != VFS_FILE) { term_println(t, "append: nao e um arquivo"); return; }
+    if (!node || node->type != VFS_FILE) { term_println(t, tr(STR_TERM_APPEND_NOT_A_FILE)); return; }
     
     vfs_append(node, rest);
     vfs_append(node, "\n");
-    term_println(t, "  acrescentado.");
+    term_println(t, tr(STR_TERM_APPEND_DONE));
 }
 
 static void cmd_rm(TermState* t, const char* name) {
-    if (!name || !name[0]) { term_println(t, "rm: nome necessario"); return; }
+    if (!name || !name[0]) { term_println(t, tr(STR_TERM_RM_NEED_NAME)); return; }
     VfsNode* node = vfs_resolve(vfs_cwd(), name);
-    if (!node) { term_println(t, "rm: nao encontrado"); return; }
-    if (node == vfs_root()) { term_println(t, "rm: nao posso remover o root"); return; }
-    if (node == vfs_cwd()) { term_println(t, "rm: nao posso remover o diretorio atual"); return; }
+    if (!node) { term_println(t, tr(STR_TERM_RM_NOT_FOUND)); return; }
+    if (node == vfs_root()) { term_println(t, tr(STR_TERM_RM_CANT_ROOT)); return; }
+    if (node == vfs_cwd()) { term_println(t, tr(STR_TERM_RM_CANT_CWD)); return; }
     vfs_rm(node);
-    term_println(t, "  removido.");
+    term_println(t, tr(STR_TERM_RM_DONE));
 }
 
 static void cmd_stat(TermState* t, const char* name) {
-    if (!name || !name[0]) { term_println(t, "stat: nome necessario"); return; }
+    if (!name || !name[0]) { term_println(t, tr(STR_TERM_STAT_NEED_NAME)); return; }
     VfsNode* node = vfs_resolve(vfs_cwd(), name);
-    if (!node) { term_println(t, "stat: nao encontrado"); return; }
+    if (!node) { term_println(t, tr(STR_TERM_STAT_NOT_FOUND)); return; }
     char buf[TERM_COLS + 1];
-    kstrcpy(buf, "  Nome : "); kstrcat(buf, node->name);
+    kstrcpy(buf, tr(STR_TERM_STAT_NAME)); kstrcat(buf, node->name);
     term_println(t, buf);
-    kstrcpy(buf, "  Tipo : ");
-    kstrcat(buf, node->type == VFS_DIR ? "diretorio" : "arquivo");
+    kstrcpy(buf, tr(STR_TERM_STAT_TYPE));
+    kstrcat(buf, node->type == VFS_DIR ? tr(STR_TERM_STAT_TYPE_DIR) : tr(STR_TERM_STAT_TYPE_FILE));
     term_println(t, buf);
     if (node->type == VFS_FILE) {
         char sz[24]; kitoa((int64_t)node->size, sz);
-        kstrcpy(buf, "  Tam  : "); kstrcat(buf, sz); kstrcat(buf, " bytes");
+        kstrcpy(buf, tr(STR_TERM_STAT_SIZE)); kstrcat(buf, sz); kstrcat(buf, " bytes");
         term_println(t, buf);
     } else {
         char cnt[24]; kitoa((int64_t)node->child_count, cnt);
-        kstrcpy(buf, "  Itens: "); kstrcat(buf, cnt);
+        kstrcpy(buf, tr(STR_TERM_STAT_ITEMS)); kstrcat(buf, cnt);
         term_println(t, buf);
     }
     char path[512];
     vfs_path_of(node, path, sizeof(path));
-    kstrcpy(buf, "  Path : "); kstrcat(buf, path);
+    kstrcpy(buf, tr(STR_TERM_STAT_PATH)); kstrcat(buf, path);
     term_println(t, buf);
 }
 
@@ -390,12 +405,14 @@ static void term_execute(TermState* t, const char* input) {
         cmd_rm(t, args);
     } else if (kstrcmp(cmd, "stat") == 0) {
         cmd_stat(t, args);
+    } else if (kstrcmp(cmd, "lang") == 0) {
+        cmd_lang(t, args);
     } else {
         char buf[TERM_COLS + 1];
-        kstrcpy(buf, "  Comando nao encontrado: ");
+        kstrcpy(buf, tr(STR_TERM_CMD_NOT_FOUND));
         kstrcat(buf, cmd);
         term_println(t, buf);
-        term_println(t, "  Digite 'help' para ver os comandos.");
+        term_println(t, tr(STR_TERM_CMD_NOT_FOUND_HINT));
     }
 }
 
@@ -537,8 +554,8 @@ Window* terminal_create(int32_t x, int32_t y) {
     t->last_blink     = 0;
     t->cmd_hist_pos   = -1;
 
-    term_println(t, "  HAOS Shell v1.2  --  Digite 'help' para ajuda");
-    term_println(t, "  Use o mouse para arrastar esta janela.");
+    term_println(t, tr(STR_TERM_WELCOME_1));
+    term_println(t, tr(STR_TERM_WELCOME_2));
     term_println(t, "");
 
     win->content      = t;
