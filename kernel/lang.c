@@ -51,7 +51,7 @@ static const char* const g_pt[STR_COUNT] = {
     [STR_RESTART]               = "Reiniciar",
     [STR_SHUTDOWN]              = "Desligar",
     [STR_MENU_CLOSE_HINT]       = "[ESC] fechar",
-    [STR_DESKTOP_HINT_BAR]      = "[S] Menu  [T] Terminal  [A] Sobre  [C] Config",
+    [STR_DESKTOP_HINT_BAR]      = "[S] Menu  [T] Terminal  [A] Sobre  [E] Editor  [C] Config",
     [STR_STARTMENU_HEADER]      = "HAOS  v1.1",
 
     [STR_ICON_TERMINAL]         = "Terminal",
@@ -164,6 +164,17 @@ static const char* const g_pt[STR_COUNT] = {
     [STR_TERM_LANG_SET_PT]      = "  Idioma alterado para Portugues.",
     [STR_TERM_LANG_SET_EN]      = "  Idioma alterado para Ingles.",
     [STR_TERM_LANG_USAGE]       = "lang: uso: lang <pt|en>",
+
+    [STR_EDITOR_TITLE]         = "Bloco de Notas",
+    [STR_EDITOR_SAVED]         = "Salvo!",
+    [STR_EDITOR_SAVE_FAILED]   = "Falha ao salvar",
+    [STR_EDITOR_COPIED]        = "Copiado!",
+    [STR_EDITOR_CUT]           = "Recortado!",
+    [STR_EDITOR_PASTED]        = "Colado!",
+    [STR_EDITOR_SAVEAS_PROMPT] = "Salvar como (digite o nome do arquivo):",
+    [STR_EDITOR_SAVEAS_HINT]   = "[Enter] Salvar   [ESC] Cancelar",
+    [STR_ICON_EDITOR]          = "Bloco de Notas",
+    [STR_TERM_HELP_EDIT]       = "  edit <nome>   -- abre o bloco de notas",
 };
 
 // ---- Tabela: English -------------------------------------------
@@ -211,7 +222,7 @@ static const char* const g_en[STR_COUNT] = {
     [STR_RESTART]               = "Restart",
     [STR_SHUTDOWN]              = "Shut down",
     [STR_MENU_CLOSE_HINT]       = "[ESC] close",
-    [STR_DESKTOP_HINT_BAR]      = "[S] Menu  [T] Terminal  [A] About  [C] Settings",
+    [STR_DESKTOP_HINT_BAR]      = "[S] Menu  [T] Terminal  [A] About  [E] Editor  [C] Settings",
     [STR_STARTMENU_HEADER]      = "HAOS  v1.1",
 
     [STR_ICON_TERMINAL]         = "Terminal",
@@ -324,6 +335,17 @@ static const char* const g_en[STR_COUNT] = {
     [STR_TERM_LANG_SET_PT]      = "  Language changed to Portuguese.",
     [STR_TERM_LANG_SET_EN]      = "  Language changed to English.",
     [STR_TERM_LANG_USAGE]       = "lang: usage: lang <pt|en>",
+
+    [STR_EDITOR_TITLE]         = "Notepad",
+    [STR_EDITOR_SAVED]         = "Saved!",
+    [STR_EDITOR_SAVE_FAILED]   = "Failed to save",
+    [STR_EDITOR_COPIED]        = "Copied!",
+    [STR_EDITOR_CUT]           = "Cut!",
+    [STR_EDITOR_PASTED]        = "Pasted!",
+    [STR_EDITOR_SAVEAS_PROMPT] = "Save as (type the file name):",
+    [STR_EDITOR_SAVEAS_HINT]   = "[Enter] Save   [ESC] Cancel",
+    [STR_ICON_EDITOR]          = "Notepad",
+    [STR_TERM_HELP_EDIT]       = "  edit <name>   -- opens the notepad",
 };
 
 void lang_init(void) {

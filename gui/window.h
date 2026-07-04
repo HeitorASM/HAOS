@@ -27,11 +27,22 @@ typedef struct Window {
     // Drag state
     bool     dragging;
     int32_t  drag_ox, drag_oy;   // offset do clique relativo à janela
+    bool     content_mouse_down; // true se o botão foi pressionado dentro da área de conteúdo
 
     // Conteúdo
     void*    content;
     void   (*draw_content)(struct Window* win);
     void   (*on_key)(struct Window* win, uint8_t c);
+    // Clique do mouse dentro da área de conteúdo.
+    // (cx, cy) são coordenadas absolutas em tela (mesmo espaço usado por draw_content),
+    // o app compara com suas próprias coordenadas desenhadas.
+    void   (*on_click)(struct Window* win, int32_t cx, int32_t cy);
+    // Arrasto do mouse (botão pressionado, movendo) dentro da área de conteúdo.
+    // Chamado continuamente enquanto o botão estiver pressionado e o mouse se mover,
+    // sem que a janela esteja sendo arrastada pela titlebar. Usado para seleção de texto.
+    void   (*on_drag)(struct Window* win, int32_t cx, int32_t cy);
+    // Soltar o botão do mouse (fim de um possível arrasto/seleção).
+    void   (*on_mouse_up)(struct Window* win);
 } Window;
 
 void    wm_init(void);

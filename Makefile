@@ -73,6 +73,7 @@ C_SRCS   = kernel/kernel.c        \
            gui/apps/terminal.c    \
            gui/apps/about.c       \
            gui/apps/config.c      \
+           gui/apps/editor.c      \
            gui/wallpaper.c        \
            fs/vfs.c
 

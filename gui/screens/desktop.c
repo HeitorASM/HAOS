@@ -6,6 +6,7 @@
 #include "../apps/terminal.h"
 #include "../apps/about.h"
 #include "../apps/config.h"
+#include "../apps/editor.h"
 #include "../../drivers/fb.h"
 #include "../../drivers/font.h"
 #include "../../kernel/keyboard.h"  
@@ -48,6 +49,10 @@ static void handle_desktop_key(uint8_t c) {
         } else if (c == 'a' || c == 'A') {
             open_about_window();
             start_menu_open = false;
+        } else if (c == 'e' || c == 'E') {
+            uint32_t sw = fb_width(), sh = fb_height();
+            editor_create((int32_t)(sw/2 - 300), (int32_t)(sh/2 - 200), NULL);
+            start_menu_open = false;
         } else if (c == 'r' || c == 'R') {
             outb(0x64, 0xFE);
             while(1) __asm__("hlt");
@@ -74,6 +79,11 @@ static void handle_desktop_key(uint8_t c) {
     }
     if (c == 'a' || c == 'A') { open_about_window(); return; }
     if (c == 'c' || c == 'C') { open_config_window(); return; }
+    if (c == 'e' || c == 'E') {
+        uint32_t sw = fb_width(), sh = fb_height();
+        editor_create((int32_t)(sw/2 - 300), (int32_t)(sh/2 - 200), NULL);
+        return;
+    }
 }
 
 // -------------------------------------------------------------
@@ -102,6 +112,13 @@ static void desktop_handle_click(int32_t mx, int32_t my, uint32_t sw, uint32_t s
     if (mx >= ICON_CONF_X && mx < ICON_CONF_X + ICON_W &&
         my >= ICON_CONF_Y && my < ICON_CONF_Y + ICON_H + ICON_LABEL_H) {
         open_config_window();
+        start_menu_open = false;
+        return;
+    }
+    // Editor de texto
+    if (mx >= ICON_EDIT_X && mx < ICON_EDIT_X + ICON_W &&
+        my >= ICON_EDIT_Y && my < ICON_EDIT_Y + ICON_H + ICON_LABEL_H) {
+        editor_create((int32_t)(sw/2 - 300), (int32_t)(sh/2 - 200), NULL);
         start_menu_open = false;
         return;
     }
@@ -143,13 +160,14 @@ void run_desktop(void) {
                     start_menu_open = !start_menu_open;
                 else if (terminal_win && terminal_win->active &&
                          mx >= START_BTN_W + 12 && mx < START_BTN_W + 12 + 130) {
+                    terminal_win->minimized = false;
                     wm_focus(terminal_win);
                     start_menu_open = false;
                 }
             }
             // Menu Iniciar
             else if (start_menu_open) {
-                uint32_t mh = 244;
+                uint32_t mh = 278;
                 uint32_t menu_x = 4, menu_y = sh - TASKBAR_H - mh;
                 if (mx >= (int32_t)menu_x && mx < (int32_t)(menu_x + 210)) {
                     int rel_y = my - (int32_t)menu_y - 50;
@@ -163,10 +181,13 @@ void run_desktop(void) {
                     } else if (item == 1) {  // Sobre
                         open_about_window();
                         start_menu_open = false;
-                    } else if (item == 2) {  // Configurações
+                    } else if (item == 2) {  // Editor
+                        editor_create((int32_t)(sw/2 - 300), (int32_t)(sh/2 - 200), NULL);
+                        start_menu_open = false;
+                    } else if (item == 3) {  // Configurações
                         open_config_window();
                         start_menu_open = false;
-                    } else if (item == 4) {  // Reiniciar
+                    } else if (item == 5) {  // Reiniciar
                         outb(0x64, 0xFE);
                         while(1) __asm__("hlt");
                     }
@@ -198,6 +219,8 @@ void run_desktop(void) {
 
         if (terminal_win)
             terminal_tick(terminal_win, ticks);
+
+        editor_tick_all(ticks);
 
         // Fundo (wallpaper ou gradiente padrão)
         wallpaper_draw(sw, sh);

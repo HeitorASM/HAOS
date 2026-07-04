@@ -7,7 +7,7 @@
 
 void draw_start_menu(void) {
     uint32_t sh = fb_height();
-    uint32_t mw = 210, mh = 244;
+    uint32_t mw = 210, mh = 278;
     uint32_t mx = 4, my = sh - TASKBAR_H - mh;
 
     fb_draw_shadow(mx + 6, my + 6, mw, mh);
@@ -19,9 +19,10 @@ void draw_start_menu(void) {
     fb_draw_string_centered(mx, my + 1, mw, 44,
                              tr(STR_STARTMENU_HEADER), COLOR_TEXT_LIGHT, 0, true);
 
-    char item_terminal[40], item_about[40], item_settings[40];
+    char item_terminal[40], item_about[40], item_editor[40], item_settings[40];
     kstrcpy(item_terminal, "  [T]  "); kstrcat(item_terminal, tr(STR_TERMINAL));
     kstrcpy(item_about,    "  [A]  "); kstrcat(item_about,    tr(STR_ABOUT));
+    kstrcpy(item_editor,   "  [E]  "); kstrcat(item_editor,   tr(STR_ICON_EDITOR));
     kstrcpy(item_settings, "  [C]  "); kstrcat(item_settings, tr(STR_SETTINGS));
     char item_restart[40], item_shutdown[40];
     kstrcpy(item_restart,  "  [R]  "); kstrcat(item_restart,  tr(STR_RESTART));
@@ -30,6 +31,7 @@ void draw_start_menu(void) {
     const char* items[] = {
         item_terminal,
         item_about,
+        item_editor,
         item_settings,
         "",
         item_restart,
@@ -37,7 +39,7 @@ void draw_start_menu(void) {
     };
     int item_h = 34;
     int iy = (int)my + 50;
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 7; i++) {
         if (!items[i][0]) {
             fb_fill_rect(mx + 12, (uint32_t)(iy + item_h/2), mw - 24, 1, 0x223A66);
         } else {

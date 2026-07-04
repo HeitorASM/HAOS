@@ -60,8 +60,32 @@ void draw_icon_settings(uint32_t ix, uint32_t iy) {
                              COLOR_TEXT_LIGHT, 0, true);
 }
 
+void draw_icon_editor(uint32_t ix, uint32_t iy) {
+    fb_draw_rounded_rect(ix, iy, ICON_W, ICON_H, 0x14201C, 7);
+    fb_fill_rect(ix + 2, iy + 2, ICON_W - 4, 1, 0x3A5C4E);
+
+    // "Folha de papel"
+    uint32_t px1 = ix + 14, py1 = iy + 8, pw = 22, ph = 30;
+    fb_fill_rect(px1, py1, pw, ph, 0xE8F0E8);
+    fb_fill_rect(px1, py1, pw, 3, 0xC8D8C8);
+    // Linhas de texto simuladas
+    fb_fill_rect(px1 + 3, py1 + 8,  pw - 8, 2, 0x8AA090);
+    fb_fill_rect(px1 + 3, py1 + 13, pw - 8, 2, 0x8AA090);
+    fb_fill_rect(px1 + 3, py1 + 18, pw - 12, 2, 0x8AA090);
+
+    // "Caneta" na diagonal
+    uint32_t qx = ix + ICON_W - 16, qy = iy + 10;
+    fb_fill_rect(qx, qy, 4, 20, 0x50C090);
+    fb_fill_circle(qx + 2, qy + 20, 3, 0x3FA070);
+
+    fb_draw_string_centered(ix - 4, iy + ICON_H + 4, ICON_W + 8,
+                             ICON_LABEL_H, tr(STR_ICON_EDITOR),
+                             COLOR_TEXT_LIGHT, 0, true);
+}
+
 void draw_desktop_icons(void) {
     draw_icon_terminal(ICON_TERM_X, ICON_TERM_Y);
     draw_icon_about(ICON_ABOUT_X, ICON_ABOUT_Y);
     draw_icon_settings(ICON_CONF_X, ICON_CONF_Y);
+    draw_icon_editor(ICON_EDIT_X, ICON_EDIT_Y);
 }

@@ -7,6 +7,7 @@
 #include "../../drivers/rtc.h"
 #include "../../fs/vfs.h"
 #include "../../kernel/lang.h"
+#include "editor.h"
 
 #define PAD 8
 
@@ -106,6 +107,7 @@ static void cmd_help(TermState* t) {
     term_println(t, tr(STR_TERM_HELP_APPEND));
     term_println(t, tr(STR_TERM_HELP_RM));
     term_println(t, tr(STR_TERM_HELP_STAT));
+    term_println(t, tr(STR_TERM_HELP_EDIT));
 }
 
 static void cmd_about(TermState* t) {
@@ -162,6 +164,11 @@ static void cmd_lang(TermState* t, const char* arg) {
     } else {
         term_println(t, tr(STR_TERM_LANG_USAGE));
     }
+}
+
+static void cmd_edit(const char* name) {
+    uint32_t sw = fb_width(), sh = fb_height();
+    editor_create((int32_t)(sw/2 - 300), (int32_t)(sh/2 - 200), name);
 }
 
 // ---- Comandos de FS -----------------------------------------
@@ -407,6 +414,8 @@ static void term_execute(TermState* t, const char* input) {
         cmd_stat(t, args);
     } else if (kstrcmp(cmd, "lang") == 0) {
         cmd_lang(t, args);
+    } else if (kstrcmp(cmd, "edit") == 0) {
+        cmd_edit(args);
     } else {
         char buf[TERM_COLS + 1];
         kstrcpy(buf, tr(STR_TERM_CMD_NOT_FOUND));

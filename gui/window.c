@@ -22,12 +22,16 @@ Window* wm_create(WinType type, int32_t x, int32_t y,
             win->focused   = false;
             win->minimized = false;
             win->dragging  = false;
+            win->content_mouse_down = false;
             win->type      = type;
             win->x = x; win->y = y;
             win->w = w; win->h = h;
             win->content      = NULL;
             win->draw_content = NULL;
             win->on_key       = NULL;
+            win->on_click     = NULL;
+            win->on_drag      = NULL;
+            win->on_mouse_up  = NULL;
             kstrcpy(win->title, title);
             wm_focus(win);
             return win;
@@ -84,6 +88,21 @@ static bool in_close_btn(Window* win, int32_t mx, int32_t my) {
     return mx >= bx && mx < bx + BTN_SIZE && my >= by && my < by + BTN_SIZE;
 }
 
+// Retorna true se (mx,my) está dentro do botão Minimizar
+static bool in_min_btn(Window* win, int32_t mx, int32_t my) {
+    int32_t bx = win->x + (int32_t)win->w - WIN_BORDER - (BTN_SIZE + BTN_GAP) * 3 + BTN_GAP;
+    int32_t by = win->y + WIN_BORDER + (TITLE_BAR_H - BTN_SIZE) / 2;
+    return mx >= bx && mx < bx + BTN_SIZE && my >= by && my < by + BTN_SIZE;
+}
+
+// Retorna true se (mx,my) está dentro da área de conteúdo (abaixo da titlebar)
+static bool in_content(Window* win, int32_t mx, int32_t my) {
+    return mx >= win->x + WIN_BORDER &&
+           mx <  win->x + (int32_t)win->w - WIN_BORDER &&
+           my >= win->y + WIN_BORDER + TITLE_BAR_H + 1 &&
+           my <  win->y + (int32_t)win->h - WIN_BORDER;
+}
+
 // Retorna true se (mx,my) está dentro de qualquer área da janela
 static bool in_window(Window* win, int32_t mx, int32_t my) {
     return mx >= win->x && mx < win->x + (int32_t)win->w &&
@@ -93,16 +112,26 @@ static bool in_window(Window* win, int32_t mx, int32_t my) {
 // ---- Mouse events ----------------------------------------------
 
 bool wm_mouse_down(int32_t mx, int32_t my) {
+    // Reseta o estado de "clique dentro do conteúdo" de todas as janelas
+    // antes de decidir qual janela recebe este novo clique
+    for (int i = 0; i < MAX_WINDOWS; i++) windows[i].content_mouse_down = false;
+
     // Verifica na ordem inversa (janela no topo primeiro)
     // Testa janela focada primeiro
     if (focused_idx >= 0 && windows[focused_idx].active) {
         Window* win = &windows[focused_idx];
         if (in_window(win, mx, my)) {
             if (in_close_btn(win, mx, my)) { wm_close(win); return true; }
+            if (in_min_btn(win, mx, my))   { win->minimized = true; return true; }
             if (in_titlebar(win, mx, my)) {
                 win->dragging = true;
                 win->drag_ox  = mx - win->x;
                 win->drag_oy  = my - win->y;
+                return true;
+            }
+            if (!win->minimized && in_content(win, mx, my) && win->on_click) {
+                win->content_mouse_down = true;
+                win->on_click(win, mx, my);
             }
             return true;
         }
@@ -114,6 +143,7 @@ bool wm_mouse_down(int32_t mx, int32_t my) {
         if (in_window(win, mx, my)) {
             wm_focus(win);
             if (in_close_btn(win, mx, my)) { wm_close(win); return true; }
+            if (in_min_btn(win, mx, my))   { win->minimized = true; return true; }
             if (in_titlebar(win, mx, my)) {
                 win->dragging = true;
                 win->drag_ox  = mx - win->x;
@@ -122,25 +152,39 @@ bool wm_mouse_down(int32_t mx, int32_t my) {
             return true;
         }
     }
+    // Clique fora de qualquer janela: se alguma estiver minimizada, um clique
+    // na taskbar (tratado pelo desktop.c) a restaura; aqui apenas desfocamos.
     return false;
 }
 
 void wm_mouse_move(int32_t mx, int32_t my) {
     Window* win = wm_get_focused();
-    if (!win || !win->dragging) return;
-    win->x = mx - win->drag_ox;
-    win->y = my - win->drag_oy;
-    // Clampa para não sair da tela
-    if (win->x < 0) win->x = 0;
-    if (win->y < 0) win->y = 0;
-    int32_t sw = (int32_t)fb_width(),  sh = (int32_t)fb_height();
-    if (win->x + (int32_t)win->w > sw) win->x = sw - (int32_t)win->w;
-    if (win->y + (int32_t)win->h > sh) win->y = sh - (int32_t)win->h;
+    if (!win) return;
+
+    if (win->dragging) {
+        win->x = mx - win->drag_ox;
+        win->y = my - win->drag_oy;
+        // Clampa para não sair da tela
+        if (win->x < 0) win->x = 0;
+        if (win->y < 0) win->y = 0;
+        int32_t sw = (int32_t)fb_width(),  sh = (int32_t)fb_height();
+        if (win->x + (int32_t)win->w > sw) win->x = sw - (int32_t)win->w;
+        if (win->y + (int32_t)win->h > sh) win->y = sh - (int32_t)win->h;
+        return;
+    }
+
+    if (win->content_mouse_down && win->on_drag) {
+        win->on_drag(win, mx, my);
+    }
 }
 
 void wm_mouse_up(void) {
-    for (int i = 0; i < MAX_WINDOWS; i++)
+    for (int i = 0; i < MAX_WINDOWS; i++) {
+        if (windows[i].content_mouse_down && windows[i].on_mouse_up)
+            windows[i].on_mouse_up(&windows[i]);
         windows[i].dragging = false;
+        windows[i].content_mouse_down = false;
+    }
 }
 
 // ---- Desenho de uma janela -------------------------------------

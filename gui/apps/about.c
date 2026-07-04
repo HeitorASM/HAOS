@@ -34,7 +34,14 @@ static void about_draw(Window* win) {
     }
 }
 
+static Window* about_win = NULL;
+
 void open_about_window(void) {
+    if (about_win && about_win->active) {
+        about_win->minimized = false;
+        wm_focus(about_win);
+        return;
+    }
     uint32_t sw = fb_width(), sh = fb_height();
     Window* w = wm_create(WIN_TYPE_ABOUT,
                           (int32_t)(sw/2 - 220), (int32_t)(sh/2 - 150),
@@ -42,5 +49,6 @@ void open_about_window(void) {
     if (w) {
         w->draw_content = about_draw;
         w->on_key = NULL;
+        about_win = w;
     }
 }

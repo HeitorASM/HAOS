@@ -185,6 +185,53 @@ static void config_draw_content(Window* w) {
                    CFG_DIM, 0, true);
 }
 
+// ---- Mouse ----
+static void config_on_click(Window* w, int32_t cx, int32_t cy) {
+    int wx = w->x + WIN_BORDER;
+    int wy = w->y + TITLE_BAR_H;
+    int lx = cx - wx, ly = cy - wy;   // coordenadas relativas ao conteúdo
+
+    int count = wallpaper_count();
+
+    // Item "Padrão"
+    if (lx >= LIST_X && lx < LIST_X + LIST_W &&
+        ly >= LIST_Y && ly < LIST_Y + (ITEM_H - 2)) {
+        wallpaper_set(-1);
+        goto retitle;
+    }
+    // Itens de wallpaper
+    for (int i = 0; i < count; i++) {
+        int iy = LIST_Y + (i + 1) * ITEM_H;
+        if (lx >= LIST_X && lx < LIST_X + LIST_W &&
+            ly >= iy && ly < iy + (ITEM_H - 2)) {
+            wallpaper_set(i);
+            goto retitle;
+        }
+    }
+    // Modos (Preencher / Centralizar / Lado a lado)
+    for (int m = 0; m < 3; m++) {
+        int bx = LIST_X + m * (MODE_W + 8);
+        int by = mode_section_y() + 18;
+        if (lx >= bx && lx < bx + MODE_W && ly >= by && ly < by + MODE_H) {
+            wallpaper_set_mode((WallpaperMode)m);
+            goto retitle;
+        }
+    }
+    // Idioma (Português / English)
+    for (int l = 0; l < 2; l++) {
+        int bx = LIST_X + l * (LANG_W + 8);
+        int by = lang_section_y() + 18;
+        if (lx >= bx && lx < bx + LANG_W && ly >= by && ly < by + LANG_H) {
+            lang_set((Lang)l);
+            goto retitle;
+        }
+    }
+    return;
+
+retitle:
+    kstrcpy(w->title, tr(STR_CONFIG_WINDOW_TITLE));
+}
+
 // ---- Teclado ----
 static void config_on_key(Window* w, uint8_t c) {
     (void)w;
@@ -205,7 +252,7 @@ static void config_on_key(Window* w, uint8_t c) {
 
 // ---- Abre a janela ----
 void open_config_window(void) {
-    if (cfg_win && cfg_win->active) { wm_focus(cfg_win); return; }
+    if (cfg_win && cfg_win->active) { cfg_win->minimized = false; wm_focus(cfg_win); return; }
 
     uint32_t sw = fb_width(), sh = fb_height();
     int wx = (int)(sw / 2) - CFG_W / 2;
@@ -216,6 +263,7 @@ void open_config_window(void) {
 
     cfg_win->draw_content = config_draw_content;
     cfg_win->on_key       = config_on_key;
+    cfg_win->on_click     = config_on_click;
 
     wm_focus(cfg_win);
 }

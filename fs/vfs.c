@@ -1,8 +1,9 @@
 #include "vfs.h"
 #include "../kernel/memory.h"
-//um sistema de arquivos virtual que roda na RAM no OS 
-//ele tem limitaçoes esperadas como ter um limite de quanto um arquivo pode pesar (256 bytes) 
-// e itens por pasta (max: 32) e se deletar tem uma "chance" de vazar memoria 
+// Sistema de arquivos virtual que roda na RAM do OS.
+// Arquivos crescem dinamicamente (dobra de capacidade) até VFS_FILE_MAX,
+// e diretórios suportam até VFS_MAX_CHILDREN itens.
+// Se deletar tem uma "chance" de vazar memória (limitação conhecida, ok para um SO educacional).
 
 
 // ---- Estado global ------------------------------------------
@@ -17,6 +18,7 @@ static VfsNode* vfs_alloc_node(const char* name, VfsType type) {
     kstrcpy(n->name, name);
     n->type = type;
     n->size = 0;
+    n->capacity = 0;
     n->data = NULL;
     n->parent = NULL;
     n->child_count = 0;
@@ -133,17 +135,42 @@ VfsNode* vfs_touch(VfsNode* parent, const char* name) {
 
     VfsNode* n = vfs_alloc_node(name, VFS_FILE);
     if (!n) return NULL;
-    // Aloca buffer de dados
-    n->data = (char*)kzalloc(VFS_FILE_MAX);
+    // Aloca buffer inicial de dados
+    n->data = (char*)kzalloc(VFS_FILE_INITIAL);
     if (!n->data) return NULL;
+    n->capacity = VFS_FILE_INITIAL;
     if (!vfs_add_child(parent, n)) return NULL;
     return n;
 }
 
+// Garante que `file->data` tenha pelo menos `needed` bytes de capacidade,
+// dobrando o tamanho até chegar lá (ou até o limite VFS_FILE_MAX).
+bool vfs_ensure_capacity(VfsNode* file, uint32_t needed) {
+    if (!file || file->type != VFS_FILE) return false;
+    if (needed > VFS_FILE_MAX) needed = VFS_FILE_MAX;
+    if (file->capacity >= needed) return true;
+
+    uint32_t new_cap = file->capacity ? file->capacity : VFS_FILE_INITIAL;
+    while (new_cap < needed && new_cap < VFS_FILE_MAX) new_cap *= 2;
+    if (new_cap > VFS_FILE_MAX) new_cap = VFS_FILE_MAX;
+
+    char* new_data = (char*)kzalloc(new_cap);
+    if (!new_data) return false;
+
+    if (file->data && file->size > 0)
+        kmemcpy(new_data, file->data, file->size);
+    if (file->data) kfree(file->data);
+
+    file->data = new_data;
+    file->capacity = new_cap;
+    return true;
+}
+
 bool vfs_write(VfsNode* file, const char* data) {
-    if (!file || file->type != VFS_FILE || !file->data) return false;
+    if (!file || file->type != VFS_FILE) return false;
     size_t len = kstrlen(data);
     if (len >= VFS_FILE_MAX) len = VFS_FILE_MAX - 1;
+    if (!vfs_ensure_capacity(file, (uint32_t)(len + 1))) return false;
     kmemcpy(file->data, data, len);
     file->data[len] = 0;
     file->size = (uint32_t)len;
@@ -151,11 +178,15 @@ bool vfs_write(VfsNode* file, const char* data) {
 }
 
 bool vfs_append(VfsNode* file, const char* data) {
-    if (!file || file->type != VFS_FILE || !file->data) return false;
+    if (!file || file->type != VFS_FILE) return false;
     size_t cur_len = file->size;
     size_t add_len = kstrlen(data);
-    if (cur_len + add_len >= VFS_FILE_MAX)
+    size_t total = cur_len + add_len;
+    if (total >= VFS_FILE_MAX) {
         add_len = VFS_FILE_MAX - 1 - cur_len;
+        total = VFS_FILE_MAX - 1;
+    }
+    if (!vfs_ensure_capacity(file, (uint32_t)(total + 1))) return false;
     kmemcpy(file->data + cur_len, data, add_len);
     file->size = (uint32_t)(cur_len + add_len);
     file->data[file->size] = 0;
@@ -181,6 +212,9 @@ bool vfs_rm(VfsNode* node) {
         // Recursão simples — remove todos filhos primeiro
         while (node->child_count > 0)
             vfs_rm(node->children[0]);
+    } else if (node->data) {
+        kfree(node->data);
+        node->data = NULL;
     }
     return true;
 }
