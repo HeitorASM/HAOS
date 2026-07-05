@@ -90,7 +90,7 @@ O HAOS é um sistema operacional bare-metal de 64 bits desenvolvido de forma ind
 ### Dependências (Ubuntu / Debian)
 
 ```bash
-sudo apt install gcc-x86-64-linux-gnu g++-x86-64-linux-gnu nasm grub-pc-bin xorriso qemu-system-x86 python3-pip
+sudo apt install gcc-x86-64-linux-gnu g++-x86-64-linux-gnu nasm grub-pc-bin xorriso python3-pip
 pip3 install Pillow
 ```
 
