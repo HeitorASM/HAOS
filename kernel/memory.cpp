@@ -412,4 +412,10 @@ uint64_t mem_get_free_pages()   { return s_free_pages; }
 uint64_t mem_get_used_pages()   { return s_total_pages > s_free_pages ? s_total_pages - s_free_pages : 0; }
 uint64_t mem_get_heap_used()    { return s_heap_used; }
 
+// ---- API de baixo nível do PFA, exposta para o módulo de paginação ----
+// (pfa_alloc_page/pfa_free_page continuam privadas ao namespace anônimo
+//  acima; estas são as únicas portas de entrada externas ao PFA.)
+uint64_t pfa_alloc_frame(void) { return pfa_alloc_page(); }
+void     pfa_free_frame(uint64_t phys_addr) { pfa_free_page(phys_addr); }
+
 } 

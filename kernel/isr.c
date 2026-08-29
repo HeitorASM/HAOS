@@ -164,6 +164,10 @@ static void isr_panic_screen(regs_t* r) {
     while (1) __asm__ volatile ("hlt");
 }
 
+void isr_fatal(regs_t* regs) {
+    isr_panic_screen(regs);
+}
+
 void isr_handler(regs_t* regs) {
     uint8_t v = (uint8_t)regs->vector;
 

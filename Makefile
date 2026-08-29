@@ -81,6 +81,7 @@ C_SRCS   = kernel/kernel.c        \
 
 # ── Fontes C++ ────────────────────────────────────────────────────────────
 CXX_SRCS = kernel/memory.cpp      \
+           kernel/paging.cpp      \
            kernel/sysinfo.cpp     \
            kernel/crt.cpp         \
            gui/widget.cpp

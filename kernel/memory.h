@@ -46,6 +46,13 @@ uint64_t mem_get_free_pages(void);    // Páginas físicas livres
 uint64_t mem_get_used_pages(void);    // Páginas físicas usadas
 uint64_t mem_get_heap_used(void);     // Bytes usados na heap do kernel
 
+// ---- API de baixo nível do PFA (usada pelo módulo de paginação) ----
+// Aloca/liberta UMA página física de 4KB. Retorna endereço físico
+// (0 = sem memória livre). Não confundir com kmalloc: isto trabalha
+// direto com o PageFrameAllocator, sem passar pela heap.
+uint64_t pfa_alloc_frame(void);
+void     pfa_free_frame(uint64_t phys_addr);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

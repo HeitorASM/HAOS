@@ -5,6 +5,7 @@
 #include "pit.h"
 #include "keyboard.h"
 #include "memory.h"
+#include "paging.h"
 #include "sysinfo.h"
 #include "lang.h"
 #include "../drivers/fb.h"
@@ -59,6 +60,14 @@ void kernel_main(uint32_t magic, uint32_t mb_info_raw) {
 
     // Inicializa a memória PRIMEIRO
     memory_init(mb_info_raw);
+
+    // Substitui o mapeamento temporário de 2MB do boot.asm por uma
+    // hierarquia de tabelas de página real, com granularidade de
+    // 4KB e um handler de #PF que resolve demand paging (kernel.c
+    // continua identity-mapped por enquanto — higher-half fica para
+    // quando implementarmos Ring 3 com espaços de endereço próprios
+    // por processo).
+    paging_init();
 
     // Percorre tags para encontrar o framebuffer
     uint8_t* ptr = (uint8_t*)(uintptr_t)(mb_info_raw + 8);

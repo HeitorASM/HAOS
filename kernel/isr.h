@@ -39,6 +39,13 @@ void isr_register_handler(uint8_t vector, isr_handler_fn fn);
 // Chamado pelo stub em assembly.
 void isr_handler(regs_t* regs);
 
+// Dispara a tela de panic padrão (registros, motivo do #PF quando
+// aplicável, etc.) diretamente, sem passar por isr_handler(). Usado
+// por handlers customizados (ex.: paging.cpp) que decidem que uma
+// exceção específica é, de fato, fatal e querem reusar o mesmo
+// diagnóstico visual em vez de duplicar a lógica de desenho.
+void isr_fatal(regs_t* regs);
+
 #ifdef __cplusplus
 }
 #endif
