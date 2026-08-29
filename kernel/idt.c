@@ -1,6 +1,6 @@
-// kernel/idt.c — IDT para 64-bit
 #include "idt.h"
 #include "types.h"
+#include "isr.h"
 
 extern void irq0_handler(void);
 extern void irq1_handler(void);
@@ -36,9 +36,21 @@ static void idt_set(int n, void (*handler)(void)) {
     idt[n].zero     = 0;
 }
 
+// Exposto em idt.h para outros módulos (isr.c) instalarem handlers
+// próprios em vetores específicos sem reimplementar a lógica de GDT gate.
+void idt_set_gate(int n, void (*handler)(void)) {
+    idt_set(n, handler);
+}
+
 void idt_init(void) {
     for (int i = 0; i < 256; i++)
         idt_set(i, default_handler);
+
+    // Vetores 0-31: exceções da CPU. Instalados por isr_install()
+    // (kernel/isr.c) com stubs individuais que preservam o contexto
+    // completo e permitem diagnóstico real (antes caíam todos no
+    // default_handler genérico, que apenas manda EOI e ignora tudo).
+    isr_install();
 
     idt_set(32, irq0_handler);   // IRQ0 = timer
     idt_set(33, irq1_handler);   // IRQ1 = teclado
