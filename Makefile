@@ -49,13 +49,15 @@ ASM_SRCS = boot/boot.asm          \
            kernel/gdt_asm.asm     \
            kernel/idt_asm.asm     \
            kernel/isr_asm.asm     \
-           kernel/usermode.asm
+           kernel/usermode.asm    \
+           kernel/syscall_asm.asm
 
 # ── Fontes C ──────────────────────────────────────────────────────────────
 C_SRCS   = kernel/kernel.c        \
            kernel/gdt.c           \
            kernel/idt.c           \
            kernel/isr.c           \
+           kernel/syscall.c       \
            kernel/pic.c           \
            kernel/pit.c           \
            kernel/keyboard.c      \

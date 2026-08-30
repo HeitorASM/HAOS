@@ -6,6 +6,8 @@
 #include "keyboard.h"
 #include "memory.h"
 #include "paging.h"
+#include "syscall.h"
+#include "usermode.h"
 #include "sysinfo.h"
 #include "lang.h"
 #include "../drivers/fb.h"
@@ -40,7 +42,7 @@ static void kpanic(const char* msg) {
 }
 
 void kernel_main(uint32_t magic, uint32_t mb_info_raw) {
-    // GDT
+    // GDT (agora inclui seletores de usuário + TSS)
     gdt_init();
 
     // IDT + interrupções
@@ -110,6 +112,14 @@ void kernel_main(uint32_t magic, uint32_t mb_info_raw) {
     rtc_init();
     vfs_init();
     lang_init();
+
+    // Habilita SYSCALL/SYSRET (MSRs STAR/LSTAR/SFMASK + EFER.SCE).
+    // A infraestrutura de Ring 3 (paging_map com PAGE_USER,
+    // enter_usermode, syscalls sys_write/sys_exit) já está pronta e
+    // foi validada ponta a ponta com um processo de teste — removido
+    // daqui após a validação. O primeiro uso real volta junto com o
+    // carregador de executáveis + scheduler.
+    syscall_init();
 
     gui_init();
     gui_run();
