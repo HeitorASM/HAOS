@@ -48,7 +48,8 @@ NASMFLAGS = -f elf64
 ASM_SRCS = boot/boot.asm          \
            kernel/gdt_asm.asm     \
            kernel/idt_asm.asm     \
-           kernel/isr_asm.asm
+           kernel/isr_asm.asm     \
+           kernel/usermode.asm
 
 # ── Fontes C ──────────────────────────────────────────────────────────────
 C_SRCS   = kernel/kernel.c        \
