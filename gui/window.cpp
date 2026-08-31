@@ -6,11 +6,23 @@
 Window::Window(int32_t x, int32_t y, uint32_t w, uint32_t h,
               const char* title_, WinType type_)
     : Container(x, y, w, h),
-      active(true), minimized(false), type(type_),
-      dragging(false), drag_ox(0), drag_oy(0)
+      active(true), minimized(false), maximized(false), type(type_),
+      dragging(false), drag_ox(0), drag_oy(0),
+      resizing(false), resize_edge(0)
 {
     kstrncpy(title, title_, sizeof(title) - 1);
     title[sizeof(title) - 1] = '\0';
+    saved_bounds = bounds;
+}
+
+void Window::on_resized() {
+    // Implementação padrão: apenas notifica os filhos (útil para
+    // Container widgets que usam layout automático). Apps que
+    // desenham manualmente (Terminal, Editor) sobrescrevem isto se
+    // precisarem recalcular algo além do que draw() já resolve via
+    // content_area_absolute() sendo recalculado a cada frame.
+    WidgetEvent ev{EventType::Resize, 0, 0, 0};
+    m_children.dispatch(ev, 0, 0);
 }
 
 Rect Window::content_area_absolute() const {
@@ -52,21 +64,38 @@ void Window::draw(int32_t ox, int32_t oy) {
     uint32_t ty = y + BORDER + (TITLE_BAR_H - FONT_H) / 2;
     fb_draw_string(tx, ty, title, title_col, 0, true);
 
-    // --- Botões de controle (círculos) ---
+    // --- Botões de controle (círculos com ícone) ---
     int32_t by2 = (int32_t)(y + BORDER) + (int32_t)(TITLE_BAR_H - BTN_SIZE) / 2;
-    // Fechar (vermelho)
+    // Fechar (vermelho, "x")
     int32_t bx2 = (int32_t)(x + w - BORDER - BTN_SIZE - BTN_GAP);
     fb_fill_circle((uint32_t)(bx2 + (int32_t)BTN_SIZE / 2),
                    (uint32_t)(by2 + (int32_t)BTN_SIZE / 2), BTN_SIZE / 2, 0xE05555);
     fb_draw_string((uint32_t)(bx2 + 4), (uint32_t)(by2 + 3), "x", 0xFFAAAA, 0, true);
-    // Maximizar (verde)
+
+    // Maximizar (verde, quadrado vazado — ou dois quadrados
+    // sobrepostos quando já maximizada, sinalizando "restaurar")
     bx2 -= (int32_t)(BTN_SIZE + BTN_GAP);
     fb_fill_circle((uint32_t)(bx2 + (int32_t)BTN_SIZE / 2),
                    (uint32_t)(by2 + (int32_t)BTN_SIZE / 2), BTN_SIZE / 2, 0x50B050);
-    // Minimizar (amarelo)
+    {
+        int32_t icon_cx = bx2 + (int32_t)BTN_SIZE / 2;
+        int32_t icon_cy = by2 + (int32_t)BTN_SIZE / 2;
+        if (maximized) {
+            // Ícone de "restaurar": dois quadrados pequenos sobrepostos
+            fb_draw_rect((uint32_t)(icon_cx - 3), (uint32_t)(icon_cy - 3), 4, 4, 0x0A2A0A, 1);
+            fb_draw_rect((uint32_t)(icon_cx - 1), (uint32_t)(icon_cy - 1), 4, 4, 0x0A2A0A, 1);
+        } else {
+            // Ícone de "maximizar": um quadrado vazado
+            fb_draw_rect((uint32_t)(icon_cx - 3), (uint32_t)(icon_cy - 3), 6, 6, 0x0A2A0A, 1);
+        }
+    }
+
+    // Minimizar (amarelo, traço horizontal)
     bx2 -= (int32_t)(BTN_SIZE + BTN_GAP);
     fb_fill_circle((uint32_t)(bx2 + (int32_t)BTN_SIZE / 2),
                    (uint32_t)(by2 + (int32_t)BTN_SIZE / 2), BTN_SIZE / 2, 0xE0B840);
+    fb_fill_rect((uint32_t)(bx2 + (int32_t)BTN_SIZE / 2 - 3),
+                (uint32_t)(by2 + (int32_t)BTN_SIZE / 2), 6, 1, 0x3A2A0A);
 
     // --- Separador abaixo da titlebar ---
     fb_fill_rect(x + BORDER, y + BORDER + TITLE_BAR_H, w - BORDER * 2, 1, 0x0A1428);
@@ -83,4 +112,16 @@ void Window::draw(int32_t ox, int32_t oy) {
     // "manualmente" (Terminal) simplesmente não adicionam filhos e
     // usam content_area_absolute() para saber onde desenhar.
     Container::draw(ox, oy);
+
+    // --- Grip de redimensionamento (canto inferior direito) ---
+    // Só desenhado quando focada e não maximizada — sinaliza ao
+    // usuário que a borda/canto pode ser arrastado para redimensionar.
+    if (focused && !maximized) {
+        uint32_t gx = x + w - 10, gy = y + h - 10;
+        uint32_t grip_col = 0x3A5AAA;
+        for (int i = 0; i < 3; i++) {
+            fb_fill_rect(gx + (uint32_t)(i * 3), gy + 8, 2, 2, grip_col);
+            fb_fill_rect(gx + 8, gy + (uint32_t)(i * 3), 2, 2, grip_col);
+        }
+    }
 }

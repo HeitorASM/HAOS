@@ -31,6 +31,22 @@ void    wm_focus(Window* win);
 Window* wm_get_focused(void);
 int     wm_active_count(void);
 
+// ---- Minimizar / Maximizar / Restaurar ----
+// Estas funções existem tanto para uso interno do WM (hit-test dos
+// botões de chrome) quanto para a taskbar poder oferecer as mesmas
+// ações a partir da lista de janelas (ex.: clicar no item da taskbar
+// de uma janela minimizada deve restaurá-la e focá-la).
+void    wm_minimize(Window* win);
+void    wm_restore(Window* win);     // desminimiza E desmaximiza
+void    wm_maximize_toggle(Window* win);
+
+// ---- Iteração de todas as janelas (para a taskbar listar todas,
+//      não só a focada) ----
+// Percorre os MAX_WINDOWS slots; retorna nullptr em slots vazios.
+// A taskbar deve pular nullptr e janelas com active == false.
+Window* wm_get_window_at(int index);
+int     wm_window_slot_count(void); // sempre MAX_WINDOWS, para uso em loops
+
 void    wm_draw_window(Window* win);
 void    wm_draw_all(void);
 
