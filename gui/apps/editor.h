@@ -1,4 +1,3 @@
-// gui/apps/editor.h — Editor de texto simples do HAOS
 #pragma once
 #include "../window.h"
 

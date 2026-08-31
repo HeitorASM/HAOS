@@ -26,6 +26,10 @@ typedef struct VfsNode {
 } VfsNode;
 
 // ---- API pública --------------------------------------------
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void      vfs_init(void);
 
 VfsNode*  vfs_root(void);
@@ -47,3 +51,7 @@ bool      vfs_rm(VfsNode* node);
 bool      vfs_ensure_capacity(VfsNode* file, uint32_t needed);
 
 void      vfs_path_of(VfsNode* node, char* buf, size_t bufsz);
+
+#ifdef __cplusplus
+}
+#endif

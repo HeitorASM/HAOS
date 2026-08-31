@@ -67,18 +67,11 @@ C_SRCS   = kernel/kernel.c        \
            drivers/font.c         \
            drivers/mouse.c        \
            drivers/rtc.c          \
-           gui/window.c           \
-           gui/gui.c              \
            gui/screens/boot.c     \
            gui/screens/welcome.c  \
-           gui/screens/desktop.c  \
            gui/elements/icons.c   \
            gui/elements/taskbar.c \
            gui/elements/startmenu.c \
-           gui/apps/terminal.c    \
-           gui/apps/about.c       \
-           gui/apps/config.c      \
-           gui/apps/editor.c      \
            gui/wallpaper.c        \
            fs/vfs.c
 
@@ -87,7 +80,20 @@ CXX_SRCS = kernel/memory.cpp      \
            kernel/paging.cpp      \
            kernel/sysinfo.cpp     \
            kernel/crt.cpp         \
-           gui/widget.cpp
+           gui/theme.cpp          \
+           gui/widget.cpp         \
+           gui/widgets_basic.cpp  \
+           gui/widgets_input.cpp  \
+           gui/container.cpp      \
+           gui/layout.cpp         \
+           gui/window.cpp         \
+           gui/wm.cpp             \
+           gui/gui.cpp            \
+           gui/screens/desktop.cpp \
+           gui/apps/about.cpp     \
+           gui/apps/config.cpp    \
+           gui/apps/terminal.cpp  \
+           gui/apps/editor.cpp
 
 ASM_OBJS     = $(ASM_SRCS:.asm=.o)
 C_OBJS       = $(C_SRCS:.c=.o)

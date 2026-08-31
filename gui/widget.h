@@ -1,20 +1,21 @@
 #pragma once
 #include "../kernel/types.h"
+#include "theme.h"
 
-// ============================================================
-//  widget.h — Hierarquia OOP da UI do HAOS
+//  widget.h — Widget Core do HAOS
 //
-//  Prova de conceito do runtime C++ e da heap dinâmica:
-//    - Widget     : classe base abstrata com draw() virtual puro
-//    - Button     : widget concreto clicável
-//    - Label      : widget concreto de texto estático
-//    - Window2    : contêiner que gere uma lista de Widgets via 'new'
+//  Substitui o sistema anterior (Window C + Window2/Widget C++
+//  coexistindo, cada um com seu próprio conjunto de callbacks
+//  fixos: on_click/on_key/on_drag/on_mouse_up espalhados e
+//  inconsistentes) por UM único sistema:
 //
-//  NÃO usa std::vector, std::list, std::string nem qualquer stdlib.
-//  A lista de widgets é implementada via lista ligada simples.
-// ============================================================
+//    - Widget: classe base para TODO elemento de UI, desde a
+//      janela inteira até um botão individual. Usa despacho de
+//      evento único (on_event) em vez de callbacks separados.
+//    - Container: Widget que tem filhos (janela, painel).
+//    - Layout automático (VStack/HStack) — ver layout.h.
 
-// ---- Estrutura de retângulo simples ----
+// ---- Retângulo simples (preservado do widget.h anterior) ----
 struct Rect {
     int32_t  x, y;
     uint32_t w, h;
@@ -25,135 +26,102 @@ struct Rect {
     }
 };
 
-// ============================================================
-//  Widget — Classe Base Abstrata
-// ============================================================
-class Widget {
-public:
-    Rect     bounds;    // posição e tamanho relativo ao pai
-    bool     visible;   // é visível?
-    bool     enabled;   // aceita input?
-
-    Widget(int32_t x, int32_t y, uint32_t w, uint32_t h)
-        : bounds{x, y, w, h}, visible(true), enabled(true) {}
-
-    // Destrutor virtual — necessário para delete correto em herança
-    virtual ~Widget() = default;
-
-    // draw() é puro: cada subclasse DEVE implementar.
-    // ox,oy = offset absoluto do pai no framebuffer
-    virtual void draw(int32_t ox, int32_t oy) = 0;
-
-    // on_click: chamado quando o widget é clicado (coordenadas relativas ao pai)
-    virtual void on_click(int32_t /*mx*/, int32_t /*my*/) {}
-
-    // on_key: chamado quando o widget tem foco e uma tecla é pressionada
-    virtual void on_key(uint8_t /*c*/) {}
+//  Sistema de eventos unificado
+enum class EventType : uint8_t {
+    MouseDown,   // botão pressionado dentro do widget
+    MouseUp,     // botão solto (widget pode não estar mais sob o cursor)
+    MouseMove,   // cursor se movendo (com ou sem botão pressionado)
+    MouseDrag,   // movendo COM botão pressionado — equivalente ao
+                 // on_drag antigo, usado p.ex. para seleção de texto
+    KeyDown,     // tecla pressionada, widget precisa estar focado
+    Focus,       // widget acabou de ganhar foco (ex.: via Tab ou clique)
+    Blur,        // widget acabou de perder foco
+    Resize,      // bounds do widget mudou (ex.: janela redimensionada)
+    Paint,       // solicitação explícita de redesenho (raramente usado
+                 // diretamente — draw() já cobre a maioria dos casos)
 };
 
-// ============================================================
-//  Nó interno da lista ligada de Widgets
-// ============================================================
+struct WidgetEvent {
+    EventType type;
+    // Coordenadas relativas ao próprio widget (não ao pai) para
+    // eventos de mouse — cada widget recebe (0,0) no seu canto
+    // superior esquerdo, independente de onde está na tela.
+    int32_t   x, y;
+    uint8_t   key;       // válido apenas em KeyDown
+};
+
+// Resultado do despacho: diz ao chamador (Container/WM) se o evento
+// foi tratado (para de propagar) ou deve continuar sendo oferecido
+// a outros widgets (ex.: clique fora de qualquer botão específico).
+enum class EventResult : uint8_t {
+    Ignored,
+    Handled,
+};
+
+//  Widget — Classe Base Abstrata
+class Widget {
+public:
+    Rect     bounds;     // posição/tamanho relativo ao pai
+    bool     visible;
+    bool     enabled;
+    bool     focused;    // true se este widget tem o foco de teclado
+
+    Widget(int32_t x, int32_t y, uint32_t w, uint32_t h)
+        : bounds{x, y, w, h}, visible(true), enabled(true), focused(false) {}
+
+    virtual ~Widget() = default;
+
+    // draw() é puro: cada subclasse concreta DEVE implementar.
+    // ox,oy = offset absoluto do pai no framebuffer (acumulado
+    // subindo a árvore — cada Container soma sua própria posição
+    // antes de desenhar os filhos).
+    virtual void draw(int32_t ox, int32_t oy) = 0;
+
+    // Despacho de evento único. Implementação padrão: ignora tudo
+    // (widgets "burros" como Label não precisam sobrescrever nada).
+    // Widgets interativos sobrescrevem para tratar os tipos que
+    // fazem sentido para eles, retornando Handled quando consomem
+    // o evento (impede que Container/WM continue propagando).
+    virtual EventResult on_event(const WidgetEvent& /*ev*/) {
+        return EventResult::Ignored;
+    }
+
+    // Tamanho "natural" do widget quando o layout automático (ver
+    // layout.h) precisa decidir quanto espaço reservar para ele.
+    // Widgets de tamanho fixo (Button, TextField) retornam bounds.w/h;
+    // widgets que se ajustam ao conteúdo (Label) recalculam aqui.
+    virtual uint32_t preferred_width()  const { return bounds.w; }
+    virtual uint32_t preferred_height() const { return bounds.h; }
+};
+
+//  Nó interno da lista ligada de Widgets (preservado — já
+//  funciona bem e evita depender de stdlib)
 struct WidgetNode {
     Widget*     widget;
     WidgetNode* next;
 };
 
-// ============================================================
-//  WidgetList — Lista ligada de ponteiros Widget* (sem stdlib)
-// ============================================================
+//  WidgetList — coleção ordenada de widgets, com despacho de
+//  evento percorrendo a lista até algum widget tratar (Handled).
 class WidgetList {
 public:
-    WidgetList()  : m_head(nullptr), m_count(0) {}
+    WidgetList() : m_head(nullptr), m_count(0) {}
     ~WidgetList() { clear(); }
 
-    // Adiciona um widget à lista (assume ownership do ponteiro)
     void add(Widget* w);
-
-    // Remove e destrói todos os widgets
     void clear();
 
-    // Itera e chama draw em todos os widgets visíveis
     void draw_all(int32_t ox, int32_t oy);
 
-    // Dispara on_click no primeiro widget que contém (mx,my)
-    // Retorna true se algum widget consumiu o evento
-    bool dispatch_click(int32_t ox, int32_t oy, int32_t mx, int32_t my);
+    // Percorre os widgets tentando despachar o evento (já com as
+    // coordenadas convertidas para o espaço de CADA widget). Para
+    // no primeiro que retornar Handled. Retorna o próprio resultado.
+    EventResult dispatch(const WidgetEvent& ev, int32_t ox, int32_t oy);
 
     int count() const { return m_count; }
+    WidgetNode* head() const { return m_head; }
 
 private:
     WidgetNode* m_head;
     int         m_count;
-};
-
-// ============================================================
-//  Button — Widget concreto clicável
-// ============================================================
-class Button : public Widget {
-public:
-    char     label[32];
-    uint32_t bg_color;
-    uint32_t fg_color;
-    uint32_t border_color;
-    bool     pressed;
-
-    // Callback opcional: chamado no on_click
-    void (*on_click_cb)(Button* btn);
-
-    Button(int32_t x, int32_t y, uint32_t w, uint32_t h,
-           const char* lbl,
-           uint32_t bg = 0x1A3A6A, uint32_t fg = 0xDDEEFF,
-           uint32_t border = 0x5AA0FF);
-
-    void draw(int32_t ox, int32_t oy) override;
-    void on_click(int32_t mx, int32_t my) override;
-};
-
-// ============================================================
-//  Label — Widget de texto estático
-// ============================================================
-class Label : public Widget {
-public:
-    char     text[64];
-    uint32_t color;
-    bool     transparent_bg;
-
-    Label(int32_t x, int32_t y, const char* txt, uint32_t col = 0xDDEEFF);
-
-    void draw(int32_t ox, int32_t oy) override;
-    void set_text(const char* txt);
-};
-
-// ============================================================
-//  Window2 — Janela OOP com lista de Widgets dinâmicos
-//  (Nomeada Window2 para não colidir com a Window em C existente)
-// ============================================================
-class Window2 {
-public:
-    Rect       bounds;
-    char       title[64];
-    WidgetList widgets;   // lista encadeada de Widgets alocados via 'new'
-    bool       active;
-    bool       focused;
-
-    Window2(int32_t x, int32_t y, uint32_t w, uint32_t h, const char* t);
-    virtual ~Window2() = default;
-
-    // Adiciona um widget à janela (new é chamado pelo chamador; Window2 toma ownership)
-    void add_widget(Widget* w) { widgets.add(w); }
-
-    // Desenha a janela inteira (chrome + widgets)
-    virtual void draw();
-
-    // Distribui eventos
-    void dispatch_click(int32_t mx, int32_t my);
-    void dispatch_key(uint8_t c);
-
-protected:
-    // Ponto de extensão: subclasses podem sobrepor o conteúdo
-    virtual void draw_content();
-
-    // Widget com foco atual (para teclado)
-    Widget* m_focused_widget;
 };

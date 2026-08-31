@@ -22,25 +22,9 @@ static const uint8_t sc_shift[128] = {
     '*', 0,  ' ', 0
 };
 
-// Códigos especiais para setas
-#define KEY_UP    0x80
-#define KEY_DOWN  0x81
-#define KEY_LEFT  0x82
-#define KEY_RIGHT 0x83
-#define KEY_F2    0x84   // usado pelo editor de texto para "Salvar"
-
-// Atalhos com Ctrl
-#define KEY_CTRL_S 0x85  // Ctrl+S -- salvar
-#define KEY_CTRL_C 0x86  // Ctrl+C -- copiar
-#define KEY_CTRL_V 0x87  // Ctrl+V -- colar
-#define KEY_CTRL_X 0x88  // Ctrl+X -- recortar
-#define KEY_CTRL_A 0x89  // Ctrl+A -- selecionar tudo
-
-// Setas com Shift pressionado -- estendem a seleção de texto
-#define KEY_SHIFT_UP    0x8A
-#define KEY_SHIFT_DOWN  0x8B
-#define KEY_SHIFT_LEFT  0x8C
-#define KEY_SHIFT_RIGHT 0x8D
+// Códigos especiais para setas e atalhos: definidos em keyboard.h
+// (movido para lá para ficarem acessíveis a outros módulos, como
+// os widgets de UI que precisam reconhecer Backspace/Enter/Setas).
 
 // Buffer de caracteres decodificados (para a aplicação)
 #define KB_BUF_SIZE 64

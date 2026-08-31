@@ -1,5 +1,5 @@
 #include "gui.h"
-#include "window.h"
+#include "wm.h"
 #include "screens/boot.h"
 #include "screens/welcome.h"
 #include "screens/desktop.h"
@@ -10,6 +10,8 @@
 extern volatile uint64_t timer_ticks;
 
 static GuiState state = GUI_STATE_BOOT;
+
+extern "C" {
 
 void gui_init(void) {
     wm_init();
@@ -35,3 +37,5 @@ void gui_run(void) {
     state = GUI_STATE_DESKTOP;
     run_desktop();
 }
+
+} // extern "C"

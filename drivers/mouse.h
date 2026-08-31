@@ -1,5 +1,9 @@
 #pragma once
 #include "../kernel/types.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 
 // ---- PS/2 Mouse driver ----------------------------------------
 // Inicializa o mouse PS/2 (habilita porta auxiliar + reporting)
@@ -22,3 +26,7 @@ int32_t mouse_get_y(void);
 bool    mouse_left_pressed(void);   // botão esquerdo está pressionado
 bool    mouse_left_clicked(void);   // foi pressionado NESTE frame
 bool    mouse_right_clicked(void);  // botão direito foi clicado neste frame
+
+#ifdef __cplusplus
+}
+#endif

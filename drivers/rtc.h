@@ -1,5 +1,9 @@
 #pragma once
 #include "../kernel/types.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 
 typedef struct {
     uint8_t second;
@@ -18,3 +22,6 @@ void rtc_read_time(rtc_time_t* t);
 void rtc_format_time(char* buf, const rtc_time_t* t);
 // Retorna "DD/MM/AAAA" (buffer >=11 bytes)
 void rtc_format_date(char* buf, const rtc_time_t* t);
+#ifdef __cplusplus
+}
+#endif

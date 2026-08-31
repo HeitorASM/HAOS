@@ -1,5 +1,9 @@
 #pragma once
-#include "../../kernel/types.h"   
+#include "../../kernel/types.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+   
 
 #define ICON_W        56
 #define ICON_H        48
@@ -19,3 +23,6 @@ void draw_icon_about(uint32_t ix, uint32_t iy);
 void draw_icon_settings(uint32_t ix, uint32_t iy);
 void draw_icon_editor(uint32_t ix, uint32_t iy);
 void draw_desktop_icons(void);
+#ifdef __cplusplus
+}
+#endif

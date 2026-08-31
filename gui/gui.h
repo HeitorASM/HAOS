@@ -7,5 +7,13 @@ typedef enum {
     GUI_STATE_DESKTOP = 2,
 } GuiState;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void gui_init(void);
-void gui_run(void);      // loop principal (não retorna)
+void gui_run(void);      // loop principal 
+
+#ifdef __cplusplus
+}
+#endif

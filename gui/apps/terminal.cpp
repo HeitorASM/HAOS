@@ -1,20 +1,22 @@
 #include "terminal.h"
-#include "../window.h"
+#include "../wm.h"
 #include "../../drivers/fb.h"
 #include "../../drivers/font.h"
 #include "../../kernel/memory.h"
 #include "../../kernel/types.h"
+#include "../../kernel/keyboard.h"
 #include "../../drivers/rtc.h"
 #include "../../fs/vfs.h"
 #include "../../kernel/lang.h"
 #include "editor.h"
 
 #define PAD 8
-
-// ---- Histórico de comandos ----------------------------------
 #define TERM_CMD_HISTORY 20
+#define PROMPT_MAX 40
 
-typedef struct {
+// ---- Estado do terminal (era TermState + void* win->content;
+//      agora é membro direto de TerminalWindow) ----
+struct TermState {
     char lines[TERM_HIST][TERM_COLS + 1];
     int  num_lines;
     int  scroll_offset;
@@ -25,13 +27,10 @@ typedef struct {
     bool     cursor_visible;
     uint64_t last_blink;
 
-    // Histórico de comandos (seta para cima/baixo)
     char cmd_history[TERM_CMD_HISTORY][TERM_BUF_SIZE];
     int  cmd_hist_count;
-    int  cmd_hist_pos;   // -1 = linha atual
-} TermState;
-
-// ---- Utilitários internos -----------------------------------
+    int  cmd_hist_pos;
+};
 
 static void term_scroll(TermState* t) {
     for (int i = 0; i < TERM_HIST - 1; i++)
@@ -69,21 +68,16 @@ static void term_println(TermState* t, const char* s) {
     term_newline(t);
 }
 
-
 static void parse_command(const char* input, char* cmd_out, size_t cmd_size, const char** args_out) {
-
     while (*input == ' ') input++;
-    
     size_t i = 0;
     while (*input && *input != ' ' && i < cmd_size - 1) {
         cmd_out[i++] = *input++;
     }
     cmd_out[i] = '\0';
- 
     while (*input == ' ') input++;
-    *args_out = input; 
+    *args_out = input;
 }
-
 
 static void cmd_help(TermState* t) {
     term_println(t, tr(STR_TERM_HELP_HEADER));
@@ -125,12 +119,10 @@ static void cmd_about(TermState* t) {
 static void cmd_date(TermState* t) {
     rtc_time_t rt;
     rtc_read_time(&rt);
-
     char date_buf[12];
     rtc_format_date(date_buf, &rt);
     char time_buf[9];
     rtc_format_time(time_buf, &rt);
-
     char line[TERM_COLS + 1];
     kmemset(line, 0, sizeof(line));
     kstrcpy(line, tr(STR_TERM_DATE_LABEL));
@@ -170,8 +162,6 @@ static void cmd_edit(const char* name) {
     uint32_t sw = fb_width(), sh = fb_height();
     editor_create((int32_t)(sw/2 - 300), (int32_t)(sh/2 - 200), name);
 }
-
-// ---- Comandos de FS -----------------------------------------
 
 static void cmd_pwd(TermState* t) {
     char buf[512];
@@ -256,27 +246,24 @@ static void cmd_cat(TermState* t, const char* name) {
 }
 
 static void cmd_write(TermState* t, const char* rest) {
-    // rest já contém "<arq> <texto>"
     while (*rest == ' ') rest++;
     if (!*rest) { term_println(t, tr(STR_TERM_WRITE_USAGE)); return; }
-    
-    // Extrai nome do arquivo (primeira palavra)
+
     char fname[VFS_NAME_MAX];
     int fi = 0;
     while (*rest && *rest != ' ' && fi < (int)(VFS_NAME_MAX) - 1) {
         fname[fi++] = *rest++;
     }
     fname[fi] = 0;
-    
-    // Pula espaços para chegar ao texto
+
     while (*rest == ' ') rest++;
-    
+
     if (!fname[0]) { term_println(t, tr(STR_TERM_WRITE_EMPTY_NAME)); return; }
-    
+
     VfsNode* node = vfs_resolve(vfs_cwd(), fname);
     if (!node) node = vfs_touch(vfs_cwd(), fname);
     if (!node || node->type != VFS_FILE) { term_println(t, tr(STR_TERM_WRITE_NOT_A_FILE)); return; }
-    
+
     vfs_write(node, rest);
     vfs_append(node, "\n");
     term_println(t, tr(STR_TERM_WRITE_DONE));
@@ -285,20 +272,20 @@ static void cmd_write(TermState* t, const char* rest) {
 static void cmd_append(TermState* t, const char* rest) {
     while (*rest == ' ') rest++;
     if (!*rest) { term_println(t, tr(STR_TERM_APPEND_USAGE)); return; }
-    
+
     char fname[VFS_NAME_MAX];
     int fi = 0;
     while (*rest && *rest != ' ' && fi < (int)(VFS_NAME_MAX) - 1) {
         fname[fi++] = *rest++;
     }
     fname[fi] = 0;
-    
+
     while (*rest == ' ') rest++;
-    
+
     VfsNode* node = vfs_resolve(vfs_cwd(), fname);
     if (!node) node = vfs_touch(vfs_cwd(), fname);
     if (!node || node->type != VFS_FILE) { term_println(t, tr(STR_TERM_APPEND_NOT_A_FILE)); return; }
-    
+
     vfs_append(node, rest);
     vfs_append(node, "\n");
     term_println(t, tr(STR_TERM_APPEND_DONE));
@@ -339,10 +326,6 @@ static void cmd_stat(TermState* t, const char* name) {
     term_println(t, buf);
 }
 
-// ---- Prompt dinâmico ----------------------------------------
-
-#define PROMPT_MAX 40
-
 static void term_build_prompt(char* buf, size_t bufsz) {
     char path[256];
     vfs_path_of(vfs_cwd(), path, sizeof(path));
@@ -356,17 +339,13 @@ static void term_build_prompt(char* buf, size_t bufsz) {
     buf[len] = 0;
 }
 
-// ---- Dispatcher ------------------------------------
-
 static void term_execute(TermState* t, const char* input) {
     char cmd[32];
     const char* args;
-    
+
     parse_command(input, cmd, sizeof(cmd), &args);
-    
-    // ignora input se ele for vazio
     if (cmd[0] == '\0') return;
-    
+
     if (t->cmd_hist_count < TERM_CMD_HISTORY) {
         kstrcpy(t->cmd_history[t->cmd_hist_count++], input);
     } else {
@@ -375,15 +354,14 @@ static void term_execute(TermState* t, const char* input) {
         kstrcpy(t->cmd_history[TERM_CMD_HISTORY - 1], input);
     }
     t->cmd_hist_pos = -1;
-    
-    // Dispatch baseado apenas no nome do comando
+
     if (kstrcmp(cmd, "help") == 0) {
         cmd_help(t);
     } else if (kstrcmp(cmd, "clear") == 0) {
         for (int i = 0; i < TERM_HIST; i++) kmemset(t->lines[i], 0, TERM_COLS+1);
         t->num_lines = 1;
     } else if (kstrcmp(cmd, "echo") == 0) {
-        term_println(t, args);  // imprime todos os argumentos
+        term_println(t, args);
     } else if (kstrcmp(cmd, "about") == 0) {
         cmd_about(t);
     } else if (kstrcmp(cmd, "date") == 0) {
@@ -425,157 +403,162 @@ static void term_execute(TermState* t, const char* input) {
     }
 }
 
-// ---- Renderização --------------------------------------------
+// ============================================================
+//  TerminalWindow — subclasse de Window. TermState era alocado
+//  via kzalloc() e guardado em win->content (void*); agora é
+//  membro direto da classe (m_state), sem alocação separada.
+// ============================================================
+class TerminalWindow : public Window {
+public:
+    TermState m_state;
 
-static void term_draw(Window* win) {
-    TermState* t = (TermState*)win->content;
-    if (!t) return;
+    TerminalWindow(int32_t x, int32_t y, uint32_t w, uint32_t h, const char* title)
+        : Window(x, y, w, h, title, WinType::Terminal)
+    {
+        kmemset(&m_state, 0, sizeof(TermState));
+        m_state.num_lines      = 1;
+        m_state.cursor_visible = true;
+        m_state.last_blink     = 0;
+        m_state.cmd_hist_pos   = -1;
 
-    int bx = win->x + WIN_BORDER + PAD;
-    int by = win->y + WIN_BORDER + TITLE_BAR_H + 1 + PAD;
-    int bw = (int)win->w - WIN_BORDER*2 - PAD*2;
-    int bh = (int)win->h - WIN_BORDER - TITLE_BAR_H - 1 - PAD*2;
-
-    int visible_rows = bh / FONT_H;
-    if (visible_rows < 1) visible_rows = 1;
-
-    int start_line = t->num_lines - visible_rows + 1;
-    if (start_line < 0) start_line = 0;
-
-    for (int r = 0; r < visible_rows - 1; r++) {
-        int line_idx = start_line + r;
-        int ry = by + r * FONT_H;
-        if (line_idx < 0 || line_idx >= TERM_HIST) continue;
-        char* text = t->lines[line_idx];
-
-        fb_fill_rect((uint32_t)bx, (uint32_t)ry, (uint32_t)bw, FONT_H, COLOR_TERM_BG);
-        if (!text[0]) continue;
-
-        if (kstrncmp(text, "haos:", 5) == 0) {
-            // Acha fim do prompt "haos:...> "
-            const char* p = text + 5;
-            int plen = 5;
-            while (*p && !(*p == '>' && *(p+1) == ' ')) { p++; plen++; }
-            if (*p) plen += 2;
-
-            char prompt_part[PROMPT_MAX + 1];
-            int copy = plen < PROMPT_MAX ? plen : PROMPT_MAX;
-            kmemcpy(prompt_part, text, (size_t)copy);
-            prompt_part[copy] = 0;
-
-            fb_draw_string((uint32_t)bx, (uint32_t)ry,
-                           prompt_part, COLOR_TERM_PROMPT, 0, true);
-            fb_draw_string((uint32_t)(bx + FONT_W * copy), (uint32_t)ry,
-                           text + copy, COLOR_TERM_CMD, 0, true);
-        } else {
-            fb_draw_string((uint32_t)bx, (uint32_t)ry,
-                           text, COLOR_TERM_FG, 0, true);
-        }
+        term_println(&m_state, tr(STR_TERM_WELCOME_1));
+        term_println(&m_state, tr(STR_TERM_WELCOME_2));
+        term_println(&m_state, "");
     }
 
-    // Linha de input
-    int input_y = by + (visible_rows - 1) * FONT_H;
-    fb_fill_rect((uint32_t)bx, (uint32_t)input_y, (uint32_t)bw, FONT_H, COLOR_TERM_BG);
+    void draw(int32_t ox, int32_t oy) override {
+        Window::draw(ox, oy);
+        if (!active || minimized) return;
 
-    char prompt[PROMPT_MAX + 1];
-    term_build_prompt(prompt, sizeof(prompt));
-    int prompt_len = (int)kstrlen(prompt);
+        TermState* t = &m_state;
+        Rect content = content_area_absolute();
+        int bx = content.x + PAD;
+        int by = content.y + PAD;
+        int bw = (int)content.w - PAD * 2;
+        int bh = (int)content.h - PAD * 2;
 
-    fb_draw_string((uint32_t)bx, (uint32_t)input_y,
-                   prompt, COLOR_TERM_PROMPT, 0, true);
-    if (t->input_len > 0)
-        fb_draw_string((uint32_t)(bx + FONT_W * prompt_len), (uint32_t)input_y,
-                       t->input, COLOR_TEXT_LIGHT, 0, true);
+        int visible_rows = bh / FONT_H;
+        if (visible_rows < 1) visible_rows = 1;
 
-    int cx = bx + FONT_W * (prompt_len + t->input_len);
-    uint32_t cur_color = t->cursor_visible ? COLOR_TERM_PROMPT : COLOR_TERM_BG;
-    fb_fill_rect((uint32_t)cx, (uint32_t)(input_y + 1), 2, FONT_H - 3, cur_color);
-}
+        int start_line = t->num_lines - visible_rows + 1;
+        if (start_line < 0) start_line = 0;
 
-// ---- Teclas ------------------------------------
+        for (int r = 0; r < visible_rows - 1; r++) {
+            int line_idx = start_line + r;
+            int ry = by + r * FONT_H;
+            if (line_idx < 0 || line_idx >= TERM_HIST) continue;
+            char* text = t->lines[line_idx];
 
-#define KEY_UP   0x80
-#define KEY_DOWN 0x81
+            fb_fill_rect((uint32_t)bx, (uint32_t)ry, (uint32_t)bw, FONT_H, COLOR_TERM_BG);
+            if (!text[0]) continue;
 
-static void term_key(Window* win, uint8_t c) {
-    TermState* t = (TermState*)win->content;
-    if (!t) return;
+            if (kstrncmp(text, "haos:", 5) == 0) {
+                const char* p = text + 5;
+                int plen = 5;
+                while (*p && !(*p == '>' && *(p+1) == ' ')) { p++; plen++; }
+                if (*p) plen += 2;
 
-    if (c == '\n' || c == '\r') {
+                char prompt_part[PROMPT_MAX + 1];
+                int copy = plen < PROMPT_MAX ? plen : PROMPT_MAX;
+                kmemcpy(prompt_part, text, (size_t)copy);
+                prompt_part[copy] = 0;
+
+                fb_draw_string((uint32_t)bx, (uint32_t)ry,
+                               prompt_part, COLOR_TERM_PROMPT, 0, true);
+                fb_draw_string((uint32_t)(bx + FONT_W * copy), (uint32_t)ry,
+                               text + copy, COLOR_TERM_CMD, 0, true);
+            } else {
+                fb_draw_string((uint32_t)bx, (uint32_t)ry,
+                               text, COLOR_TERM_FG, 0, true);
+            }
+        }
+
+        int input_y = by + (visible_rows - 1) * FONT_H;
+        fb_fill_rect((uint32_t)bx, (uint32_t)input_y, (uint32_t)bw, FONT_H, COLOR_TERM_BG);
+
         char prompt[PROMPT_MAX + 1];
         term_build_prompt(prompt, sizeof(prompt));
-        char echo_line[TERM_COLS + PROMPT_MAX + 2];
-        kstrcpy(echo_line, prompt);
-        kstrcat(echo_line, t->input);
-        term_println(t, echo_line);
-        term_execute(t, t->input);
-        kmemset(t->input, 0, TERM_BUF_SIZE);
-        t->input_len = 0;
-        t->cmd_hist_pos = -1;
+        int prompt_len = (int)kstrlen(prompt);
 
-    } else if (c == '\b') {
-        if (t->input_len > 0) {
-            t->input_len--;
-            t->input[t->input_len] = 0;
-        }
+        fb_draw_string((uint32_t)bx, (uint32_t)input_y,
+                       prompt, COLOR_TERM_PROMPT, 0, true);
+        if (t->input_len > 0)
+            fb_draw_string((uint32_t)(bx + FONT_W * prompt_len), (uint32_t)input_y,
+                           t->input, COLOR_TEXT_LIGHT, 0, true);
 
-    } else if (c == KEY_UP) {
-        if (t->cmd_hist_count == 0) return;
-        if (t->cmd_hist_pos < 0) t->cmd_hist_pos = t->cmd_hist_count - 1;
-        else if (t->cmd_hist_pos > 0) t->cmd_hist_pos--;
-        kstrcpy(t->input, t->cmd_history[t->cmd_hist_pos]);
-        t->input_len = (int)kstrlen(t->input);
+        int cx = bx + FONT_W * (prompt_len + t->input_len);
+        uint32_t cur_color = t->cursor_visible ? COLOR_TERM_PROMPT : COLOR_TERM_BG;
+        fb_fill_rect((uint32_t)cx, (uint32_t)(input_y + 1), 2, FONT_H - 3, cur_color);
+    }
 
-    } else if (c == KEY_DOWN) {
-        if (t->cmd_hist_pos < 0) return;
-        t->cmd_hist_pos++;
-        if (t->cmd_hist_pos >= t->cmd_hist_count) {
-            t->cmd_hist_pos = -1;
+    EventResult on_event(const WidgetEvent& ev) override {
+        if (ev.type != EventType::KeyDown) return EventResult::Ignored;
+
+        TermState* t = &m_state;
+        uint8_t c = ev.key;
+
+        if (c == '\n' || c == '\r') {
+            char prompt[PROMPT_MAX + 1];
+            term_build_prompt(prompt, sizeof(prompt));
+            char echo_line[TERM_COLS + PROMPT_MAX + 2];
+            kstrcpy(echo_line, prompt);
+            kstrcat(echo_line, t->input);
+            term_println(t, echo_line);
+            term_execute(t, t->input);
             kmemset(t->input, 0, TERM_BUF_SIZE);
             t->input_len = 0;
-        } else {
+            t->cmd_hist_pos = -1;
+
+        } else if (c == '\b' || c == 0x08) {
+            if (t->input_len > 0) {
+                t->input_len--;
+                t->input[t->input_len] = 0;
+            }
+
+        } else if (c == KEY_UP) {
+            if (t->cmd_hist_count == 0) return EventResult::Handled;
+            if (t->cmd_hist_pos < 0) t->cmd_hist_pos = t->cmd_hist_count - 1;
+            else if (t->cmd_hist_pos > 0) t->cmd_hist_pos--;
             kstrcpy(t->input, t->cmd_history[t->cmd_hist_pos]);
             t->input_len = (int)kstrlen(t->input);
-        }
 
-    } else if (c >= 0x20 && c < 0x7F) {
-        if (t->input_len < TERM_BUF_SIZE - 1) {
-            t->input[t->input_len++] = c;
-            t->input[t->input_len]   = 0;
+        } else if (c == KEY_DOWN) {
+            if (t->cmd_hist_pos < 0) return EventResult::Handled;
+            t->cmd_hist_pos++;
+            if (t->cmd_hist_pos >= t->cmd_hist_count) {
+                t->cmd_hist_pos = -1;
+                kmemset(t->input, 0, TERM_BUF_SIZE);
+                t->input_len = 0;
+            } else {
+                kstrcpy(t->input, t->cmd_history[t->cmd_hist_pos]);
+                t->input_len = (int)kstrlen(t->input);
+            }
+
+        } else if (c >= 0x20 && c < 0x7F) {
+            if (t->input_len < TERM_BUF_SIZE - 1) {
+                t->input[t->input_len++] = c;
+                t->input[t->input_len]   = 0;
+            }
         }
+        return EventResult::Handled;
     }
-}
+};
 
-// ---- Criação -----------------------------------
+// ---- Criação ----
 
 Window* terminal_create(int32_t x, int32_t y) {
-    uint32_t w = FONT_W * TERM_COLS + (uint32_t)(WIN_BORDER*2 + PAD*2);
-    uint32_t h = FONT_H * (TERM_ROWS + 1) + (uint32_t)(WIN_BORDER + TITLE_BAR_H + 1 + PAD*2);
+    uint32_t w = FONT_W * TERM_COLS + (uint32_t)(Window::BORDER*2 + PAD*2);
+    uint32_t h = FONT_H * (TERM_ROWS + 1) + (uint32_t)(Window::BORDER + Window::TITLE_BAR_H + 1 + PAD*2);
 
-    Window* win = wm_create(WIN_TYPE_TERMINAL, x, y, w, h, "Terminal -- HAOS Shell v1.2");
-    if (!win) return NULL;
-
-    TermState* t = (TermState*)kzalloc(sizeof(TermState));
-    if (!t) return win;
-
-    t->num_lines      = 1;
-    t->cursor_visible = true;
-    t->last_blink     = 0;
-    t->cmd_hist_pos   = -1;
-
-    term_println(t, tr(STR_TERM_WELCOME_1));
-    term_println(t, tr(STR_TERM_WELCOME_2));
-    term_println(t, "");
-
-    win->content      = t;
-    win->draw_content = term_draw;
-    win->on_key       = term_key;
+    TerminalWindow* win = new TerminalWindow(x, y, w, h, "Terminal -- HAOS Shell v1.2");
+    wm_register(win);
     return win;
 }
 
 void terminal_tick(Window* win, uint64_t ticks) {
-    if (!win || !win->content) return;
-    TermState* t = (TermState*)win->content;
+    if (!win) return;
+    TerminalWindow* tw = static_cast<TerminalWindow*>(win);
+    TermState* t = &tw->m_state;
     if (ticks - t->last_blink > 50) {
         t->cursor_visible = !t->cursor_visible;
         t->last_blink = ticks;

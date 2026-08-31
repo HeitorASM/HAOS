@@ -10,6 +10,9 @@ typedef enum {
 } WallpaperMode;
 
 // ── API pública ──────────────────────────────────────────────────────────
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 // Inicializa com nenhum wallpaper (usa gradiente padrão)
 void wallpaper_init(void);
@@ -33,3 +36,7 @@ const char* wallpaper_name(int index);
 // Desenha o wallpaper no shadow buffer (chamado por desktop.c)
 // Se nenhum wallpaper estiver ativo, desenha o gradiente padrão
 void wallpaper_draw(uint32_t sw, uint32_t sh);
+
+#ifdef __cplusplus
+}
+#endif

@@ -1,62 +1,62 @@
 #pragma once
-#include "../kernel/types.h"
+#include "container.h"
 
-#define MAX_WINDOWS  8
-#define TITLE_BAR_H  30
-#define BTN_SIZE     14
-#define BTN_GAP      5
-#define WIN_BORDER   2
-#define WIN_MIN_W    200
-#define WIN_MIN_H    100
+// ============================================================
+//  window.h — Window do HAOS (v2)
+//
+//  Substitui a struct Window (C, callbacks fixos) e a classe
+//  Window2 (C++, quase idêntica mas duplicada) por UMA única
+//  classe Window, subclasse de Container — ou seja, ela já ganha
+//  de graça: lista de filhos, despacho de evento, gerenciamento
+//  de foco (Tab entre campos) do Container/Widget Core novo.
+//
+//  A aparência visual (sombra, gradiente na titlebar, botões
+//  circulares fechar/maximizar/minimizar) é preservada
+//  EXATAMENTE como estava em window.c — esta migração muda como
+//  o código é organizado, não como o sistema parece na tela.
+//
+//  O WM (gerenciador de janelas — foco entre janelas, arrastar
+//  pela titlebar, z-order) continua com a MESMA API pública que
+//  window.h/window.c já tinham (wm_create, wm_focus,
+//  wm_mouse_down/move/up, wm_draw_all, wm_dispatch_key) — assim
+//  boot/welcome/desktop/terminal/editor/config/about precisam de
+//  mudanças mínimas para migrar (etapa 5).
+// ============================================================
 
-typedef enum {
-    WIN_TYPE_TERMINAL = 0,
-    WIN_TYPE_ABOUT,
-    WIN_TYPE_DIALOG,
-} WinType;
+enum class WinType : uint8_t {
+    Terminal = 0,
+    About,
+    Dialog,
+    Generic,
+};
 
-typedef struct Window {
+class Window : public Container {
+public:
+    Window(int32_t x, int32_t y, uint32_t w, uint32_t h,
+          const char* title, WinType type = WinType::Generic);
+
+    void draw(int32_t ox, int32_t oy) override;
+
+    // ---- Estado gerenciado pelo WM (wm.cpp) ----
     bool     active;
-    bool     focused;
     bool     minimized;
     WinType  type;
-    int32_t  x, y;
-    uint32_t w, h;
     char     title[64];
 
-    // Drag state
-    bool     dragging;
-    int32_t  drag_ox, drag_oy;   // offset do clique relativo à janela
-    bool     content_mouse_down; // true se o botão foi pressionado dentro da área de conteúdo
+    // Estado de arrasto pela titlebar (gerenciado pelo WM)
+    bool    dragging;
+    int32_t drag_ox, drag_oy;
 
-    // Conteúdo
-    void*    content;
-    void   (*draw_content)(struct Window* win);
-    void   (*on_key)(struct Window* win, uint8_t c);
-    // Clique do mouse dentro da área de conteúdo.
-    // (cx, cy) são coordenadas absolutas em tela (mesmo espaço usado por draw_content),
-    // o app compara com suas próprias coordenadas desenhadas.
-    void   (*on_click)(struct Window* win, int32_t cx, int32_t cy);
-    // Arrasto do mouse (botão pressionado, movendo) dentro da área de conteúdo.
-    // Chamado continuamente enquanto o botão estiver pressionado e o mouse se mover,
-    // sem que a janela esteja sendo arrastada pela titlebar. Usado para seleção de texto.
-    void   (*on_drag)(struct Window* win, int32_t cx, int32_t cy);
-    // Soltar o botão do mouse (fim de um possível arrasto/seleção).
-    void   (*on_mouse_up)(struct Window* win);
-} Window;
+    // ---- Métricas de chrome (usadas pelo WM para hit-testing) ----
+    static constexpr uint32_t TITLE_BAR_H = 30;
+    static constexpr uint32_t BTN_SIZE    = 14;
+    static constexpr uint32_t BTN_GAP     = 5;
+    static constexpr uint32_t BORDER      = 2;
 
-void    wm_init(void);
-Window* wm_create(WinType type, int32_t x, int32_t y,
-                  uint32_t w, uint32_t h, const char* title);
-void    wm_close(Window* win);
-void    wm_draw_all(void);
-void    wm_draw_window(Window* win);
-void    wm_focus(Window* win);
-Window* wm_get_focused(void);
-void    wm_dispatch_key(uint8_t c);
-int     wm_active_count(void);
-
-// Mouse events — retorna true se o evento foi consumido por alguma janela
-bool    wm_mouse_down(int32_t mx, int32_t my);
-void    wm_mouse_move(int32_t mx, int32_t my);
-void    wm_mouse_up(void);
+    // Área de conteúdo em coordenadas ABSOLUTAS de tela — usado por
+    // apps que ainda desenham "manualmente" dentro da janela (ex.:
+    // Terminal, que faz scroll de texto raw em vez de usar widgets).
+    // Preservado para apps de terceiro migrarem gradualmente, sem
+    // forçar todo mundo a reescrever para widgets imediatamente.
+    Rect content_area_absolute() const;
+};
