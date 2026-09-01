@@ -70,7 +70,6 @@ C_SRCS   = kernel/kernel.c        \
            gui/screens/boot.c     \
            gui/screens/welcome.c  \
            gui/elements/icons.c   \
-           gui/elements/taskbar.c \
            gui/elements/startmenu.c \
            gui/wallpaper.c        \
            fs/vfs.c
@@ -93,7 +92,8 @@ CXX_SRCS = kernel/memory.cpp      \
            gui/apps/about.cpp     \
            gui/apps/config.cpp    \
            gui/apps/terminal.cpp  \
-           gui/apps/editor.cpp
+           gui/apps/editor.cpp    \
+           gui/elements/taskbar.cpp
 
 ASM_OBJS     = $(ASM_SRCS:.asm=.o)
 C_OBJS       = $(C_SRCS:.c=.o)

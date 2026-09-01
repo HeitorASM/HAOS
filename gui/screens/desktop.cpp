@@ -1,3 +1,4 @@
+// gui/screens/desktop.cpp — Loop principal do desktop (migrado para Window v2)
 #include "desktop.h"
 #include "../wm.h"
 #include "../elements/icons.h"
@@ -26,7 +27,15 @@ static void handle_desktop_key(uint8_t c);
 static void desktop_handle_click(int32_t mx, int32_t my, uint32_t sw, uint32_t sh);
 
 // -------------------------------------------------------------
-// Tratamento de teclado (hotkeys)
+// Tratamento de teclado
+//
+// Removidos os atalhos globais de letra única (S/T/A/E/C/R) que
+// existiam antes — sistemas reais não capturam letras soltas como
+// hotkey global (isso colide com digitar normalmente em qualquer
+// janela focada, como no terminal). O único atalho de teclado que
+// sobra é ESC para fechar o menu iniciar, que é um padrão universal
+// em qualquer SO. Abrir apps agora é só via clique (ícones do
+// desktop, itens do menu iniciar, ou taskbar).
 // -------------------------------------------------------------
 static void handle_desktop_key(uint8_t c) {
     if (c == 27) {
@@ -34,58 +43,9 @@ static void handle_desktop_key(uint8_t c) {
         return;
     }
 
-    if (start_menu_open) {
-        if (c == 't' || c == 'T') {
-            if (!terminal_win || !terminal_win->active) {
-                uint32_t sw = fb_width(), sh = fb_height();
-                terminal_win = terminal_create(
-                    (int32_t)(sw/2 - 340), (int32_t)(sh/2 - 200));
-            } else {
-                wm_focus(terminal_win);
-            }
-            start_menu_open = false;
-        } else if (c == 'a' || c == 'A') {
-            open_about_window();
-            start_menu_open = false;
-        } else if (c == 'e' || c == 'E') {
-            uint32_t sw = fb_width(), sh = fb_height();
-            editor_create((int32_t)(sw/2 - 300), (int32_t)(sh/2 - 200), nullptr);
-            start_menu_open = false;
-        } else if (c == 'r' || c == 'R') {
-            outb(0x64, 0xFE);
-            while(1) __asm__("hlt");
-        }
-        return;
-    }
-
-    // Antes: checava focused->on_key (function pointer) antes de
-    // despachar. Agora, todo Window tem on_event() (é virtual com
-    // implementação padrão em Widget), então basta sempre despachar
-    // quando existe uma janela focada — o próprio on_event decide
-    // se trata ou ignora a tecla.
     Window* focused = wm_get_focused();
     if (focused) {
         wm_dispatch_key(c);
-        return;
-    }
-
-    if (c == 's' || c == 'S') { start_menu_open = !start_menu_open; return; }
-    if (c == 't' || c == 'T') {
-        if (!terminal_win || !terminal_win->active) {
-            uint32_t sw = fb_width(), sh = fb_height();
-            terminal_win = terminal_create(
-                (int32_t)(sw/2 - 340), (int32_t)(sh/2 - 200));
-        } else {
-            wm_focus(terminal_win);
-        }
-        return;
-    }
-    if (c == 'a' || c == 'A') { open_about_window(); return; }
-    if (c == 'c' || c == 'C') { open_config_window(); return; }
-    if (c == 'e' || c == 'E') {
-        uint32_t sw = fb_width(), sh = fb_height();
-        editor_create((int32_t)(sw/2 - 300), (int32_t)(sh/2 - 200), nullptr);
-        return;
     }
 }
 
@@ -152,41 +112,41 @@ extern "C" void run_desktop(void) {
         if (pressed && !was_pressed) {
             uint32_t ty = sh - TASKBAR_H;
             if (my >= (int32_t)ty) {
-                if (mx >= 4 && mx < 4 + START_BTN_W)
+                if (mx >= 4 && mx < 4 + START_BTN_W) {
                     start_menu_open = !start_menu_open;
-                else if (terminal_win && terminal_win->active &&
-                         mx >= START_BTN_W + 12 && mx < START_BTN_W + 12 + 130) {
-                    terminal_win->minimized = false;
-                    wm_focus(terminal_win);
-                    start_menu_open = false;
+                } else {
+
+                    Window* clicked = taskbar_hit_test(mx, my);
+                    if (clicked) {
+                        if (clicked->minimized) wm_restore(clicked);
+                        else if (clicked->focused) wm_minimize(clicked); 
+                        else wm_focus(clicked);
+                        start_menu_open = false;
+                    }
                 }
             }
             else if (start_menu_open) {
-                uint32_t mh = 278;
-                uint32_t menu_x = 4, menu_y = sh - TASKBAR_H - mh;
-                if (mx >= (int32_t)menu_x && mx < (int32_t)(menu_x + 210)) {
-                    int rel_y = my - (int32_t)menu_y - 50;
-                    int item = rel_y / 34;
-                    if (item == 0) {
-                        if (!terminal_win || !terminal_win->active)
-                            terminal_win = terminal_create(
-                                (int32_t)(sw/2-340), (int32_t)(sh/2-200));
-                        else wm_focus(terminal_win);
-                        start_menu_open = false;
-                    } else if (item == 1) {
-                        open_about_window();
-                        start_menu_open = false;
-                    } else if (item == 2) {
-                        editor_create((int32_t)(sw/2 - 300), (int32_t)(sh/2 - 200), nullptr);
-                        start_menu_open = false;
-                    } else if (item == 3) {
-                        open_config_window();
-                        start_menu_open = false;
-                    } else if (item == 5) {
-                        outb(0x64, 0xFE);
-                        while(1) __asm__("hlt");
-                    }
-                } else {
+
+                int item = start_menu_hit_test(mx, my);
+                if (item == 0) {
+                    if (!terminal_win || !terminal_win->active)
+                        terminal_win = terminal_create(
+                            (int32_t)(sw/2-340), (int32_t)(sh/2-200));
+                    else wm_focus(terminal_win);
+                    start_menu_open = false;
+                } else if (item == 1) {
+                    open_about_window();
+                    start_menu_open = false;
+                } else if (item == 2) {
+                    editor_create((int32_t)(sw/2 - 300), (int32_t)(sh/2 - 200), nullptr);
+                    start_menu_open = false;
+                } else if (item == 3) {
+                    open_config_window();
+                    start_menu_open = false;
+                } else if (item == 5) {
+                    outb(0x64, 0xFE);
+                    while(1) __asm__("hlt");
+                } else if (item == -1) {
                     start_menu_open = false;
                 }
             }
@@ -219,16 +179,10 @@ extern "C" void run_desktop(void) {
 
         draw_desktop_icons();
         wm_draw_all();
-        draw_taskbar(ticks, start_menu_open, terminal_win && terminal_win->active);
+        draw_taskbar(ticks, start_menu_open);
 
         if (start_menu_open)
             draw_start_menu();
-
-        if (!start_menu_open) {
-            fb_draw_string(START_BTN_W + 14, sh - TASKBAR_H + 13,
-                           tr(STR_DESKTOP_HINT_BAR),
-                           COLOR_TEXT_DIM, 0, true);
-        }
 
         fb_draw_cursor((uint32_t)mx, (uint32_t)my);
         fb_flip();
