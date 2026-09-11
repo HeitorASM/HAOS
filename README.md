@@ -32,8 +32,9 @@ O HAOS é um sistema operacional bare-metal de 64 bits desenvolvido de forma ind
 - **Framebuffer:** Driver de vídeo direto com double-buffering (shadow + cache de fundo) para renderização sem flickering.
 - **Teclado PS/2:** Driver completo com leitura de scancode, conversão de caracteres, suporte a Shift, Caps Lock, Ctrl e setas (com e sem Shift para seleção de texto).
 - **Mouse PS/2:** Captura de posição e botões com snapping de bordas.
-- **Fontes & UTF-8:** Renderização de texto com fonte bitmap 8×16 (CP437) e conversão UTF-8 → CP437, com suporte a acentos portugueses e caracteres box-drawing.
+- **Fontes & UTF-8:** Renderização de texto com fonte bitmap 8×16 (CP437) e conversão UTF-8 → CP437
 - **RTC:** Leitura e formatação de data/hora em tempo real.
+- **Armazenamento ATA/IDE:** Leitura e escrita PIO em setores de 512 bytes, com identificação LBA28, polling, timeout e tratamento de erros.
 
 ### Interface Gráfica (GUI)
 - **Gerenciador de Janelas (WM):** Sistema de janelas com foco, arraste pelo título, minimização, fechamento e ordem de empilhamento.
@@ -55,6 +56,9 @@ O HAOS é um sistema operacional bare-metal de 64 bits desenvolvido de forma ind
 - **Virtual File System:** Árvore de nós em memória com suporte a arquivos e diretórios.
   - **Limites:** Nome de arquivo: 64 caracteres; Máx. arquivos por diretório: 128; Tamanho máximo por arquivo: 1 MB (crescimento dinâmico).
 - **Operações disponíveis:** criar, listar, navegar, ler, escrever, anexar conteúdo, remover e inspecionar metadados.
+- **HAOSFS persistente:** Superbloco, bitmap de blocos, tabela de inodes e extents armazenados em disco.
+- **Montagem automática:** Volumes válidos são montados no boot; discos vazios são formatados uma única vez; volumes desconhecidos não são sobrescritos.
+- **Persistência:** Alterações são gravadas imediatamente e `reboot` executa `vfs_sync()` antes de reiniciar.
 
 ### Internacionalização (i18n)
 - **Suporte a múltiplos idiomas:** Português (Brasil) e Inglês, com alternância em tempo de execução.
@@ -67,8 +71,8 @@ O HAOS é um sistema operacional bare-metal de 64 bits desenvolvido de forma ind
 ```
 ├── boot/           # Código de inicialização e transição para Long Mode (ASM)
 ├── kernel/         # Núcleo: GDT, IDT, PIC, PIT, teclado, memória, RTC
-├── drivers/        # Framebuffer, mouse, fonte, UTF-8↔CP437
-├── fs/             # Virtual File System (VFS)
+├── drivers/        # Framebuffer, mouse, fonte, UTF-8↔CP437, bloco e ATA/IDE
+├── fs/             # VFS e filesystem persistente HAOSFS
 ├── gui/
 │   ├── apps/       # Terminal, Sobre, Configurações
 │   ├── elements/   # Taskbar, Menu Iniciar, ícones do desktop, Widgets base (C++)
@@ -187,13 +191,24 @@ Após converter, adicione os arquivos `.c` gerados ao `Makefile` em `WALLPAPER_S
 
 ---
 
+## Armazenamento Persistente
+
+O HAOSFS usa o disco inteiro a partir do LBA 2048, preservando a região inicial
+do bootloader. A primeira implementação suporta discos ATA/IDE apresentados
+como Primary Master e foi validada no VirtualBox com uma imagem VDI dedicada.
+
+No VirtualBox, use boot BIOS com `Enable EFI` desmarcado e conecte o disco de
+dados ao controlador IDE. A ISO contém o kernel e o GRUB; o VDI contém os
+arquivos persistentes.
+
 ## Limitações Técnicas Atuais
 
-1. **Volatilidade:** O sistema de arquivos opera estritamente em RAM; dados não são persistidos em disco após reinicialização.
-2. **Escalabilidade do FS:** Limite de 128 itens por diretório e 1 MB por arquivo.
-3. **Isolamento de Processos:** O sistema opera integralmente em Ring 0 (Kernel Mode) sem separação de espaço de usuário e multitarefa preemptiva.
-4. **Memória:** A heap do kernel cresce dinamicamente via PFA, mas não há suporte a memória virtual avançada (paging apenas para mapeamento identity).
-5. **Drivers:** Limitado a PS/2 para entrada e VESA para vídeo; sem suporte a USB, PCI, ACPI avançado ou som.
+1. **Escalabilidade do FS:** Limite de 128 itens por diretório e 1 MB por arquivo.
+2. **Controlador:** O driver atual suporta ATA/IDE PIO, não AHCI/SATA nativo.
+3. **Particionamento:** O HAOSFS usa o volume inteiro e ainda não lê MBR ou GPT.
+4. **Robustez:** Ainda não há journaling nem recuperação garantida se a energia for interrompida durante uma gravação.
+5. **Isolamento de Processos:** O sistema opera integralmente em Ring 0 (Kernel Mode) sem separação de espaço de usuário e multitarefa preemptiva.
+6. **Drivers:** Ainda não há suporte a USB, PCI, ACPI avançado ou som.
 
 ---
 
