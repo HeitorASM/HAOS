@@ -9,6 +9,7 @@
 #include "../../kernel/lang.h"
 
 #define PAD 8
+#define SCROLLBAR_W 10
 
 #define CLIPBOARD_MAX ((EDITOR_COLS + 1) * EDITOR_MAX_LINES)
 #define SAVEAS_MAX (VFS_NAME_MAX - 1)
@@ -19,6 +20,8 @@ struct EditorState {
 
     int  cursor_row, cursor_col;
     int  scroll_row;
+    bool manual_scroll;
+    bool scroll_dragging;
 
     char filename[VFS_NAME_MAX];
     VfsNode* file;
@@ -411,7 +414,7 @@ public:
         Rect content = content_area_absolute();
         lo.bx = content.x + PAD;
         lo.by = content.y + PAD;
-        lo.bw = (int)content.w - PAD * 2;
+        lo.bw = (int)content.w - PAD * 2 - SCROLLBAR_W;
         lo.bh = (int)content.h - PAD * 2;
 
         int status_h = FONT_H + 6;
@@ -450,10 +453,14 @@ public:
         int bx = lo.bx, by = lo.by, bw = lo.bw;
         int text_h = lo.text_h, visible_rows = lo.visible_rows;
 
-        if (e->cursor_row < e->scroll_row) e->scroll_row = e->cursor_row;
-        if (e->cursor_row >= e->scroll_row + visible_rows)
-            e->scroll_row = e->cursor_row - visible_rows + 1;
+        if (!e->manual_scroll) {
+            if (e->cursor_row < e->scroll_row) e->scroll_row = e->cursor_row;
+            if (e->cursor_row >= e->scroll_row + visible_rows)
+                e->scroll_row = e->cursor_row - visible_rows + 1;
+        }
         if (e->scroll_row < 0) e->scroll_row = 0;
+        int max_scroll = e->num_lines > visible_rows ? e->num_lines - visible_rows : 0;
+        if (e->scroll_row > max_scroll) e->scroll_row = max_scroll;
 
         fb_fill_rect((uint32_t)bx, (uint32_t)by, (uint32_t)bw, (uint32_t)text_h, COLOR_TERM_BG);
 
@@ -490,6 +497,17 @@ public:
                 int ccx = bx + FONT_W * (5 + e->cursor_col);
                 fb_fill_rect((uint32_t)ccx, (uint32_t)(ry + 1), 2, FONT_H - 3, COLOR_ACCENT);
             }
+        }
+
+        int track_x = bx + bw + 2;
+        fb_fill_rect((uint32_t)track_x, (uint32_t)by, SCROLLBAR_W,
+                     (uint32_t)text_h, 0x101C34);
+        if (max_scroll > 0) {
+            int thumb_h = text_h * visible_rows / e->num_lines;
+            if (thumb_h < FONT_H) thumb_h = FONT_H;
+            int thumb_y = by + (text_h - thumb_h) * e->scroll_row / max_scroll;
+            fb_fill_rect((uint32_t)track_x, (uint32_t)thumb_y, SCROLLBAR_W,
+                         (uint32_t)thumb_h, 0x3A66A8);
         }
 
         int status_h = FONT_H + 6;
@@ -602,8 +620,41 @@ public:
     EventResult on_event(const WidgetEvent& ev) override {
         EditorState* e = &m_state;
 
+        EditorLayout lo = compute_layout();
+        int track_x = lo.bx + lo.bw + 2;
+        int track_y = lo.by;
+        int track_h = lo.text_h;
+        if (ev.type == EventType::MouseDown || ev.type == EventType::MouseDrag) {
+            int x = bounds.x + ev.x;
+            int y = bounds.y + ev.y;
+            bool on_bar = x >= track_x && x < track_x + SCROLLBAR_W &&
+                          y >= track_y && y < track_y + track_h;
+            if (ev.type == EventType::MouseDown && on_bar)
+                e->scroll_dragging = true;
+            if (e->scroll_dragging) {
+                int max_scroll = e->num_lines > lo.visible_rows ?
+                                 e->num_lines - lo.visible_rows : 0;
+                if (max_scroll > 0) {
+                    int thumb_h = track_h * lo.visible_rows / e->num_lines;
+                    if (thumb_h < FONT_H) thumb_h = FONT_H;
+                    int usable = track_h - thumb_h;
+                    int pos = y - track_y - thumb_h / 2;
+                    if (pos < 0) pos = 0;
+                    if (pos > usable) pos = usable;
+                    e->scroll_row = pos * max_scroll / usable;
+                    e->manual_scroll = true;
+                }
+                return EventResult::Handled;
+            }
+        }
+        if (ev.type == EventType::MouseUp) {
+            e->scroll_dragging = false;
+            return EventResult::Handled;
+        }
+
         if (ev.type == EventType::MouseDown) {
             if (e->saveas_open) return EventResult::Handled;
+            e->manual_scroll = false;
             int row, col;
             screen_to_pos(ev.x, ev.y, &row, &col);
             e->cursor_row = row;
@@ -614,6 +665,7 @@ public:
 
         if (ev.type == EventType::MouseDrag) {
             if (e->saveas_open) return EventResult::Handled;
+            e->manual_scroll = false;
             int row, col;
             screen_to_pos(ev.x, ev.y, &row, &col);
             e->cursor_row = row;
@@ -660,17 +712,43 @@ public:
                 return EventResult::Handled;
             }
             if (c == KEY_CTRL_A) { editor_select_all(e); return EventResult::Handled; }
-            if (c == KEY_SHIFT_UP)    { editor_shift_arrow_key(e, KEY_UP);    return EventResult::Handled; }
-            if (c == KEY_SHIFT_DOWN)  { editor_shift_arrow_key(e, KEY_DOWN);  return EventResult::Handled; }
-            if (c == KEY_SHIFT_LEFT)  { editor_shift_arrow_key(e, KEY_LEFT);  return EventResult::Handled; }
-            if (c == KEY_SHIFT_RIGHT) { editor_shift_arrow_key(e, KEY_RIGHT); return EventResult::Handled; }
+            if (c == KEY_PAGE_UP) {
+                e->manual_scroll = true;
+                e->scroll_row -= lo.visible_rows;
+                if (e->scroll_row < 0) e->scroll_row = 0;
+                return EventResult::Handled;
+            }
+            if (c == KEY_PAGE_DOWN) {
+                int max_scroll = e->num_lines > lo.visible_rows ?
+                                 e->num_lines - lo.visible_rows : 0;
+                e->manual_scroll = true;
+                e->scroll_row += lo.visible_rows;
+                if (e->scroll_row > max_scroll) e->scroll_row = max_scroll;
+                return EventResult::Handled;
+            }
+            if (c == KEY_HOME) {
+                e->manual_scroll = true;
+                e->scroll_row = 0;
+                return EventResult::Handled;
+            }
+            if (c == KEY_END) {
+                e->manual_scroll = true;
+                e->scroll_row = e->num_lines > lo.visible_rows ?
+                                 e->num_lines - lo.visible_rows : 0;
+                return EventResult::Handled;
+            }
+            if (c == KEY_SHIFT_UP)    { e->manual_scroll = false; editor_shift_arrow_key(e, KEY_UP);    return EventResult::Handled; }
+            if (c == KEY_SHIFT_DOWN)  { e->manual_scroll = false; editor_shift_arrow_key(e, KEY_DOWN);  return EventResult::Handled; }
+            if (c == KEY_SHIFT_LEFT)  { e->manual_scroll = false; editor_shift_arrow_key(e, KEY_LEFT);  return EventResult::Handled; }
+            if (c == KEY_SHIFT_RIGHT) { e->manual_scroll = false; editor_shift_arrow_key(e, KEY_RIGHT); return EventResult::Handled; }
             if (c == KEY_UP || c == KEY_DOWN || c == KEY_LEFT || c == KEY_RIGHT) {
+                e->manual_scroll = false;
                 editor_arrow_key(e, c);
                 return EventResult::Handled;
             }
-            if (c == '\n' || c == '\r') { editor_newline(e); return EventResult::Handled; }
-            if (c == '\b' || c == 0x08) { editor_backspace(e); return EventResult::Handled; }
-            if (c >= 0x20 && c < 0x7F) { editor_insert_char(e, (char)c); return EventResult::Handled; }
+            if (c == '\n' || c == '\r') { e->manual_scroll = false; editor_newline(e); return EventResult::Handled; }
+            if (c == '\b' || c == 0x08) { e->manual_scroll = false; editor_backspace(e); return EventResult::Handled; }
+            if (c >= 0x20 && c < 0x7F) { e->manual_scroll = false; editor_insert_char(e, (char)c); return EventResult::Handled; }
             return EventResult::Handled;
         }
 
@@ -730,7 +808,7 @@ void editor_tick_all(uint64_t ticks) {
 // ---- Criação --------------------------------------------------------
 
 Window* editor_create(int32_t x, int32_t y, const char* path) {
-    uint32_t w = FONT_W * (EDITOR_COLS + 5) + (uint32_t)(Window::BORDER*2 + PAD*2);
+    uint32_t w = FONT_W * (EDITOR_COLS + 5) + (uint32_t)(Window::BORDER*2 + PAD*2 + SCROLLBAR_W);
     uint32_t h = FONT_H * (EDITOR_ROWS + 2) + (uint32_t)(Window::BORDER + Window::TITLE_BAR_H + 1 + PAD*2);
 
     EditorWindow* win = new EditorWindow(x, y, w, h, tr(STR_EDITOR_TITLE));

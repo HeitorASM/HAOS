@@ -19,6 +19,10 @@
 #define KEY_SHIFT_DOWN  0x8B
 #define KEY_SHIFT_LEFT  0x8C
 #define KEY_SHIFT_RIGHT 0x8D
+#define KEY_PAGE_UP     0x8E
+#define KEY_PAGE_DOWN   0x8F
+#define KEY_HOME        0x90
+#define KEY_END         0x91
 
 // ASCII de controle padrão já usados pelo teclado (não redefinidos
 // aqui, só documentados para quem for tratar KeyDown num widget):

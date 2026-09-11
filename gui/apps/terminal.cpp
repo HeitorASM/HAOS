@@ -11,6 +11,7 @@
 #include "editor.h"
 
 #define PAD 8
+#define SCROLLBAR_W 10
 #define TERM_CMD_HISTORY 20
 #define PROMPT_MAX 40
 
@@ -20,6 +21,7 @@ struct TermState {
     char lines[TERM_HIST][TERM_COLS + 1];
     int  num_lines;
     int  scroll_offset;
+    bool scroll_dragging;
 
     char input[TERM_BUF_SIZE];
     int  input_len;
@@ -40,6 +42,7 @@ static void term_scroll(TermState* t) {
 }
 
 static void term_newline(TermState* t) {
+    t->scroll_offset = 0;
     if (t->num_lines >= TERM_HIST) term_scroll(t);
     else t->num_lines++;
     int row = t->num_lines - 1;
@@ -434,16 +437,18 @@ public:
         Rect content = content_area_absolute();
         int bx = content.x + PAD;
         int by = content.y + PAD;
-        int bw = (int)content.w - PAD * 2;
+        int bw = (int)content.w - PAD * 2 - SCROLLBAR_W;
         int bh = (int)content.h - PAD * 2;
 
         int visible_rows = bh / FONT_H;
+        int output_rows = visible_rows - 1;
+        if (output_rows < 1) output_rows = 1;
         if (visible_rows < 1) visible_rows = 1;
-
-        int start_line = t->num_lines - visible_rows + 1;
+        int max_offset = t->num_lines > output_rows ? t->num_lines - output_rows : 0;
+        if (t->scroll_offset > max_offset) t->scroll_offset = max_offset;
+        int start_line = t->num_lines - output_rows - t->scroll_offset;
         if (start_line < 0) start_line = 0;
-
-        for (int r = 0; r < visible_rows - 1; r++) {
+        for (int r = 0; r < output_rows; r++) {
             int line_idx = start_line + r;
             int ry = by + r * FONT_H;
             if (line_idx < 0 || line_idx >= TERM_HIST) continue;
@@ -473,7 +478,7 @@ public:
             }
         }
 
-        int input_y = by + (visible_rows - 1) * FONT_H;
+        int input_y = by + output_rows * FONT_H;
         fb_fill_rect((uint32_t)bx, (uint32_t)input_y, (uint32_t)bw, FONT_H, COLOR_TERM_BG);
 
         char prompt[PROMPT_MAX + 1];
@@ -489,15 +494,75 @@ public:
         int cx = bx + FONT_W * (prompt_len + t->input_len);
         uint32_t cur_color = t->cursor_visible ? COLOR_TERM_PROMPT : COLOR_TERM_BG;
         fb_fill_rect((uint32_t)cx, (uint32_t)(input_y + 1), 2, FONT_H - 3, cur_color);
+
+        int track_x = content.x + (int)content.w - PAD - SCROLLBAR_W;
+        int track_h = output_rows * FONT_H;
+        fb_fill_rect((uint32_t)track_x, (uint32_t)by, SCROLLBAR_W,
+                     (uint32_t)track_h, 0x101C34);
+        if (max_offset > 0) {
+            int thumb_h = track_h * output_rows / t->num_lines;
+            if (thumb_h < FONT_H) thumb_h = FONT_H;
+            int thumb_y = by + (track_h - thumb_h) *
+                          (max_offset - t->scroll_offset) / max_offset;
+            fb_fill_rect((uint32_t)track_x, (uint32_t)thumb_y, SCROLLBAR_W,
+                         (uint32_t)thumb_h, 0x3A66A8);
+        }
     }
 
     EventResult on_event(const WidgetEvent& ev) override {
+        TermState* t = &m_state;
+        Rect content = content_area_absolute();
+        int output_rows = ((int)content.h - PAD * 2) / FONT_H - 1;
+        if (output_rows < 1) output_rows = 1;
+        int track_x = content.x + (int)content.w - PAD - SCROLLBAR_W;
+        int track_y = content.y + PAD;
+        int track_h = output_rows * FONT_H;
+
+        if (ev.type == EventType::MouseDown || ev.type == EventType::MouseDrag) {
+            int x = bounds.x + ev.x;
+            int y = bounds.y + ev.y;
+            bool on_bar = x >= track_x && x < track_x + SCROLLBAR_W &&
+                          y >= track_y && y < track_y + track_h;
+            if (ev.type == EventType::MouseDown && on_bar)
+                t->scroll_dragging = true;
+            if (t->scroll_dragging) {
+                int max_offset = t->num_lines > output_rows ? t->num_lines - output_rows : 0;
+                if (max_offset > 0) {
+                    int thumb_h = track_h * output_rows / t->num_lines;
+                    if (thumb_h < FONT_H) thumb_h = FONT_H;
+                    int usable = track_h - thumb_h;
+                    int pos = y - track_y - thumb_h / 2;
+                    if (pos < 0) pos = 0;
+                    if (pos > usable) pos = usable;
+                    t->scroll_offset = max_offset - pos * max_offset / usable;
+                }
+                return EventResult::Handled;
+            }
+        }
+        if (ev.type == EventType::MouseUp) {
+            t->scroll_dragging = false;
+            return EventResult::Handled;
+        }
         if (ev.type != EventType::KeyDown) return EventResult::Ignored;
 
-        TermState* t = &m_state;
         uint8_t c = ev.key;
 
-        if (c == '\n' || c == '\r') {
+        int max_offset = t->num_lines > output_rows ? t->num_lines - output_rows : 0;
+        if (c == KEY_PAGE_UP) {
+            t->scroll_offset += output_rows;
+            if (t->scroll_offset > max_offset) t->scroll_offset = max_offset;
+            return EventResult::Handled;
+        } else if (c == KEY_PAGE_DOWN) {
+            t->scroll_offset -= output_rows;
+            if (t->scroll_offset < 0) t->scroll_offset = 0;
+            return EventResult::Handled;
+        } else if (c == KEY_HOME) {
+            t->scroll_offset = max_offset;
+            return EventResult::Handled;
+        } else if (c == KEY_END) {
+            t->scroll_offset = 0;
+            return EventResult::Handled;
+        } else if (c == '\n' || c == '\r') {
             char prompt[PROMPT_MAX + 1];
             term_build_prompt(prompt, sizeof(prompt));
             char echo_line[TERM_COLS + PROMPT_MAX + 2];
@@ -547,7 +612,7 @@ public:
 // ---- Criação ----
 
 Window* terminal_create(int32_t x, int32_t y) {
-    uint32_t w = FONT_W * TERM_COLS + (uint32_t)(Window::BORDER*2 + PAD*2);
+    uint32_t w = FONT_W * TERM_COLS + (uint32_t)(Window::BORDER*2 + PAD*2 + SCROLLBAR_W);
     uint32_t h = FONT_H * (TERM_ROWS + 1) + (uint32_t)(Window::BORDER + Window::TITLE_BAR_H + 1 + PAD*2);
 
     TerminalWindow* win = new TerminalWindow(x, y, w, h, "Terminal -- HAOS Shell v1.2");
