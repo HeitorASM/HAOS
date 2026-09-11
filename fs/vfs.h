@@ -20,6 +20,7 @@ typedef struct VfsNode {
     uint32_t       size;                    // bytes usados (apenas para FILE)
     uint32_t       capacity;                // bytes alocados em `data` (apenas para FILE)
     char*          data;                    // conteúdo (FILE) ou NULL (DIR)
+    uint32_t       fs_inode;                // inode persistente, quando montado
     struct VfsNode* parent;
     struct VfsNode* children[VFS_MAX_CHILDREN];
     uint32_t        child_count;
@@ -46,6 +47,7 @@ VfsNode*  vfs_touch(VfsNode* parent, const char* name);
 bool      vfs_write(VfsNode* file, const char* data);
 bool      vfs_append(VfsNode* file, const char* data);
 bool      vfs_rm(VfsNode* node);
+bool      vfs_sync(void);
 
 // Cresce o buffer de um arquivo se necessário (usado por write/append e pelo editor)
 bool      vfs_ensure_capacity(VfsNode* file, uint32_t needed);

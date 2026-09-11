@@ -143,6 +143,7 @@ static void cmd_mem(TermState* t) {
 
 static void cmd_reboot(TermState* t) {
     (void)t;
+    vfs_sync();
     outb(0x64, 0xFE);
     while(1) __asm__("hlt");
 }

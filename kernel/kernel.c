@@ -13,6 +13,7 @@
 #include "../drivers/fb.h"
 #include "../drivers/mouse.h"
 #include "../drivers/rtc.h"
+#include "../drivers/ata_pio.h"
 #include "../gui/gui.h"
 #include "../fs/vfs.h"
 
@@ -110,6 +111,7 @@ void kernel_main(uint32_t magic, uint32_t mb_info_raw) {
 
     mouse_init();
     rtc_init();
+    ata_pio_init();
     vfs_init();
     lang_init();
 

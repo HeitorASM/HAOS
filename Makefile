@@ -67,11 +67,13 @@ C_SRCS   = kernel/kernel.c        \
            drivers/font.c         \
            drivers/mouse.c        \
            drivers/rtc.c          \
+           drivers/ata_pio.c      \
            gui/screens/boot.c     \
            gui/screens/welcome.c  \
            gui/elements/icons.c   \
            gui/wallpaper.c        \
-           fs/vfs.c
+           fs/vfs.c              \
+           fs/haosfs.c
 
 # ── Fontes C++ ────────────────────────────────────────────────────────────
 CXX_SRCS = kernel/memory.cpp      \

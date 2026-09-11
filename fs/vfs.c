@@ -1,5 +1,7 @@
 #include "vfs.h"
 #include "../kernel/memory.h"
+#include "haosfs.h"
+#include "../drivers/ata_pio.h"
 // Sistema de arquivos virtual que roda na RAM do OS.
 // Arquivos crescem dinamicamente (dobra de capacidade) até VFS_FILE_MAX,
 // e diretórios suportam até VFS_MAX_CHILDREN itens.
@@ -9,6 +11,12 @@
 // ---- Estado global ------------------------------------------
 static VfsNode* g_root = NULL;
 static VfsNode* g_cwd  = NULL;
+static bool g_persistent = false;
+
+static bool vfs_persist(void) {
+    if (!g_persistent) return true;
+    return haosfs_save(ata_pio_device(), g_root);
+}
 
 // ---- Helpers internos ---------------------------------------
 
@@ -20,6 +28,7 @@ static VfsNode* vfs_alloc_node(const char* name, VfsType type) {
     n->size = 0;
     n->capacity = 0;
     n->data = NULL;
+    n->fs_inode = 0;
     n->parent = NULL;
     n->child_count = 0;
     return n;
@@ -36,11 +45,7 @@ static bool vfs_add_child(VfsNode* parent, VfsNode* child) {
 
 // ---- API pública --------------------------------------------
 
-void vfs_init(void) {
-    g_root = vfs_alloc_node("/", VFS_DIR);
-    g_cwd  = g_root;
-
-    // Estrutura inicial do FS
+static void vfs_create_defaults(void) {
     VfsNode* bin  = vfs_mkdir(g_root, "bin");
     VfsNode* home = vfs_mkdir(g_root, "home");
     VfsNode* etc  = vfs_mkdir(g_root, "etc");
@@ -61,6 +66,30 @@ void vfs_init(void) {
 
     // CWD inicial: /home/user
     g_cwd = user;
+}
+
+void vfs_init(void) {
+    g_persistent = false;
+    g_root = vfs_alloc_node("/", VFS_DIR);
+    g_cwd  = g_root;
+
+    BlockDevice* device = ata_pio_device();
+    HaosFsProbe probe = haosfs_probe(device);
+    if (probe == HAOSFS_VALID && haosfs_mount(device, g_root)) {
+        g_persistent = true;
+        VfsNode* user = vfs_resolve(g_root, "/home/user");
+        if (user && user->type == VFS_DIR) g_cwd = user;
+        return;
+    }
+
+    if (probe == HAOSFS_EMPTY && haosfs_format(device)) {
+        g_persistent = true;
+        vfs_create_defaults();
+        vfs_persist();
+        return;
+    }
+
+    vfs_create_defaults();
 }
 
 VfsNode* vfs_root(void) { return g_root; }
@@ -122,6 +151,7 @@ VfsNode* vfs_mkdir(VfsNode* parent, const char* name) {
     VfsNode* n = vfs_alloc_node(name, VFS_DIR);
     if (!n) return NULL;
     if (!vfs_add_child(parent, n)) return NULL;
+    vfs_persist();
     return n;
 }
 
@@ -140,6 +170,7 @@ VfsNode* vfs_touch(VfsNode* parent, const char* name) {
     if (!n->data) return NULL;
     n->capacity = VFS_FILE_INITIAL;
     if (!vfs_add_child(parent, n)) return NULL;
+    vfs_persist();
     return n;
 }
 
@@ -174,7 +205,7 @@ bool vfs_write(VfsNode* file, const char* data) {
     kmemcpy(file->data, data, len);
     file->data[len] = 0;
     file->size = (uint32_t)len;
-    return true;
+    return vfs_persist();
 }
 
 bool vfs_append(VfsNode* file, const char* data) {
@@ -190,10 +221,10 @@ bool vfs_append(VfsNode* file, const char* data) {
     kmemcpy(file->data + cur_len, data, add_len);
     file->size = (uint32_t)(cur_len + add_len);
     file->data[file->size] = 0;
-    return true;
+    return vfs_persist();
 }
 
-bool vfs_rm(VfsNode* node) {
+static bool vfs_remove_node(VfsNode* node) {
     if (!node || !node->parent) return false; // não pode remover root
     VfsNode* parent = node->parent;
 
@@ -211,12 +242,21 @@ bool vfs_rm(VfsNode* node) {
     if (node->type == VFS_DIR) {
         // Recursão simples — remove todos filhos primeiro
         while (node->child_count > 0)
-            vfs_rm(node->children[0]);
+            vfs_remove_node(node->children[0]);
     } else if (node->data) {
         kfree(node->data);
         node->data = NULL;
     }
     return true;
+}
+
+bool vfs_rm(VfsNode* node) {
+    if (!vfs_remove_node(node)) return false;
+    return vfs_persist();
+}
+
+bool vfs_sync(void) {
+    return vfs_persist();
 }
 
 void vfs_path_of(VfsNode* node, char* buf, size_t bufsz) {
