@@ -1,6 +1,6 @@
 #pragma once
 #include "../../kernel/types.h"
-#include "../window.h"
+#include "../core/window.h"
 
 #define TASKBAR_H    40
 #define START_BTN_W  100

@@ -1,5 +1,5 @@
 #include "taskbar.h"
-#include "../wm.h"
+#include "../core/wm.h"
 #include "../../drivers/fb.h"
 #include "../../drivers/font.h"
 #include "../../drivers/rtc.h"

@@ -33,7 +33,7 @@ int  wallpaper_count(void);
 // Retorna o nome legível do wallpaper i (para exibir na UI)
 const char* wallpaper_name(int index);
 
-// Desenha o wallpaper no shadow buffer (chamado por desktop.c)
+// Desenha o wallpaper no shadow buffer (chamado por desktop.cpp)
 // Se nenhum wallpaper estiver ativo, desenha o gradiente padrão
 void wallpaper_draw(uint32_t sw, uint32_t sh);
 

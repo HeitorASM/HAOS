@@ -87,7 +87,18 @@ void fb_scroll_up(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
                   uint32_t lines, uint32_t fill_color);
 
 // ---- Cursor do mouse -------------------------------------------
-void fb_draw_cursor(uint32_t x, uint32_t y);
+
+// Tipos de cursor disponíveis. O WM decide qual usar (ex.: baseado
+// em hit-test de borda de janela) e passa para fb_draw_cursor.
+typedef enum {
+    CURSOR_NORMAL = 0,   // seta padrão
+    CURSOR_RESIZE_H,     // <-> redimensionar horizontal (bordas esq/dir)
+    CURSOR_RESIZE_V,     // seta dupla vertical (bordas topo/baixo)
+    CURSOR_RESIZE_DIAG1, // seta dupla diagonal "\" (cantos topo-esq / baixo-dir)
+    CURSOR_RESIZE_DIAG2, // seta dupla diagonal "/" (cantos topo-dir / baixo-esq)
+} CursorType;
+
+void fb_draw_cursor(uint32_t x, uint32_t y, CursorType type);
 
 // ---- Cache do fundo (para restaurar background sem recomputar) --
 void fb_save_bg(void);     // snapshot do shadow buffer → cache

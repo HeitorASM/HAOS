@@ -1,6 +1,6 @@
 // gui/apps/terminal.h
 #pragma once
-#include "../window.h"
+#include "../core/window.h"
 
 #define TERM_COLS     80
 #define TERM_ROWS     24

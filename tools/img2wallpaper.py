@@ -135,7 +135,7 @@ def update_master_header(output_dir: Path, all_names: list[str],
     master = output_dir / "wallpapers.h"
     with open(master, "w") as f:
         f.write("// wallpapers.h — gerado automaticamente por img2wallpaper.py\n")
-        f.write("// Inclua este arquivo em gui/screens/desktop.c ou config.c\n")
+        f.write("// Inclua este arquivo em gui/screens/desktop.cpp ou gui/apps/config.cpp\n")
         f.write("#pragma once\n\n")
 
         for name in all_names:
@@ -249,7 +249,7 @@ def main():
     for name in all_names:
         print(f"    assets/wallpapers/wallpaper_{name}.c \\")
     print()
-    print("  No desktop.c / config.c:")
+    print("  No desktop.cpp / gui/apps/config.cpp:")
     print('    #include "assets/wallpapers/wallpapers.h"')
     print("    // (uma vez, em um .c): #define WALLPAPER_TABLE_IMPL")
 

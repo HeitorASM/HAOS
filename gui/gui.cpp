@@ -1,5 +1,5 @@
 #include "gui.h"
-#include "wm.h"
+#include "core/wm.h"
 #include "screens/boot.h"
 #include "screens/welcome.h"
 #include "screens/desktop.h"

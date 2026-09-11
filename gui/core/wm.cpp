@@ -1,7 +1,7 @@
 #include "wm.h"
-#include "../kernel/memory.h"
-#include "../drivers/fb.h"
-#include "elements/taskbar.h"
+#include "../../kernel/memory.h"
+#include "../../drivers/fb.h"
+#include "../elements/taskbar.h"
 
 namespace {
 
@@ -395,6 +395,35 @@ void wm_draw_all(void) {
     if (s_focused_idx >= 0 && s_windows[s_focused_idx] && s_windows[s_focused_idx]->active) {
         wm_draw_window(s_windows[s_focused_idx]);
     }
+}
+
+// ---- Cursor hint (hover sobre borda redimensionável) ----
+
+CursorType wm_get_cursor_hint(int32_t mx, int32_t my) {
+    Window* win = wm_get_focused();
+    if (!win || win->minimized) return CURSOR_NORMAL;
+
+    // Já arrastando uma borda: mantém o cursor de resize consistente
+    // com a borda que está sendo arrastada, mesmo que o mouse se
+    // afaste um pouco da faixa de grip durante o movimento rápido.
+    uint8_t edge = win->resizing ? win->resize_edge
+                                 : hit_test_resize_edge(win, mx, my);
+    if (edge == 0) return CURSOR_NORMAL;
+
+    bool horiz = edge & (Window::RESIZE_LEFT | Window::RESIZE_RIGHT);
+    bool vert  = edge & (Window::RESIZE_TOP  | Window::RESIZE_BOTTOM);
+
+    if (horiz && vert) {
+        // Canto: escolhe a diagonal certa.
+        //   topo-esquerdo / baixo-direito      -> "\" (DIAG1)
+        //   topo-direito  / baixo-esquerdo     -> "/" (DIAG2)
+        bool top_left     = edge & Window::RESIZE_LEFT  && edge & Window::RESIZE_TOP;
+        bool bottom_right = edge & Window::RESIZE_RIGHT && edge & Window::RESIZE_BOTTOM;
+        return (top_left || bottom_right) ? CURSOR_RESIZE_DIAG1 : CURSOR_RESIZE_DIAG2;
+    }
+    if (horiz) return CURSOR_RESIZE_H;
+    if (vert)  return CURSOR_RESIZE_V;
+    return CURSOR_NORMAL;
 }
 
 void wm_dispatch_key(uint8_t c) {

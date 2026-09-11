@@ -37,7 +37,7 @@ O HAOS é um sistema operacional bare-metal de 64 bits desenvolvido de forma ind
 
 ### Interface Gráfica (GUI)
 - **Gerenciador de Janelas (WM):** Sistema de janelas com foco, arraste pelo título, minimização, fechamento e ordem de empilhamento.
-- **Widgets OOP (C++):** Hierarquia orientada a objetos com `Widget` (base abstrata), `Button`, `Label` e `Window2` (contêiner).
+- **Widgets OOP (C++):** Hierarquia orientada a objetos com `Widget` (base abstrata), `Button`, `Label` e `Window` (contêiner).
 - **Desktop com Ícones:** Atalhos clicáveis para Terminal, Sobre, Configurações e Bloco de Notas.
 - **Taskbar:** Barra de tarefas com botão Iniciar, clock em tempo real e indicador da janela ativa.
 - **Menu Iniciar:** Menu pop-up com acesso a aplicativos e opção de reinicialização.

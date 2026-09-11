@@ -275,7 +275,7 @@ graph TB
     
     subgraph ALLOCATIONS["Alocações Dinâmicas (GUI & VFS)"]
         FB_BUF["Framebuffer Buffers<br/>2x screen_w×h"]
-        WM["Hierarquia de Widgets C++<br/>Window2, Button, etc."]
+        WM["Hierarquia de Widgets C++<br/>Window, Button, etc."]
         VFS["VFS Nodes Ativos"]
         COMMANDS["Command History"]
     end

@@ -78,14 +78,14 @@ CXX_SRCS = kernel/memory.cpp      \
            kernel/paging.cpp      \
            kernel/sysinfo.cpp     \
            kernel/crt.cpp         \
-           gui/theme.cpp          \
-           gui/widget.cpp         \
+           gui/core/theme.cpp     \
+           gui/core/widget.cpp    \
+           gui/core/container.cpp \
+           gui/core/layout.cpp    \
+           gui/core/window.cpp    \
+           gui/core/wm.cpp        \
            gui/widgets_basic.cpp  \
            gui/widgets_input.cpp  \
-           gui/container.cpp      \
-           gui/layout.cpp         \
-           gui/window.cpp         \
-           gui/wm.cpp             \
            gui/gui.cpp            \
            gui/screens/desktop.cpp \
            gui/apps/about.cpp     \

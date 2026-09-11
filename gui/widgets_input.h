@@ -1,5 +1,5 @@
 #pragma once
-#include "widget.h"
+#include "core/widget.h"
 
 // ============================================================
 //  widgets_input.h — TextField

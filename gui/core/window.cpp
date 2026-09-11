@@ -1,7 +1,7 @@
 #include "window.h"
-#include "../kernel/memory.h"
-#include "../drivers/fb.h"
-#include "../drivers/font.h"
+#include "../../kernel/memory.h"
+#include "../../drivers/fb.h"
+#include "../../drivers/font.h"
 
 Window::Window(int32_t x, int32_t y, uint32_t w, uint32_t h,
               const char* title_, WinType type_)

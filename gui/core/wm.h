@@ -1,5 +1,6 @@
 #pragma once
 #include "window.h"
+#include "../../drivers/fb.h" // CursorType
 
 // ============================================================
 //  wm.h — Window Manager do HAOS
@@ -53,8 +54,17 @@ void    wm_draw_all(void);
 void    wm_dispatch_key(uint8_t c);
 
 // Mouse events — retorna true se o evento foi consumido por
-// alguma janela (usado pelo desktop.c para decidir se o clique
+// alguma janela (usado pelo desktop.cpp para decidir se o clique
 // "vazou" para ícones/taskbar por baixo).
 bool    wm_mouse_down(int32_t mx, int32_t my);
 void    wm_mouse_move(int32_t mx, int32_t my);
 void    wm_mouse_up(int32_t mx, int32_t my);
+
+// Decide qual ícone de cursor mostrar para a posição atual do mouse
+// (mx, my): seta normal, ou uma das setas duplas de redimensionar
+// quando o cursor está sobre a faixa de borda/canto redimensionável
+// da janela focada — igual ao comportamento em Windows/GNOME/macOS.
+// Também cobre o caso de já estar arrastando uma borda (win->resizing),
+// para o cursor não "piscar" de volta pra seta se o mouse sair
+// ligeiramente da faixa de grip durante o arrasto rápido.
+CursorType wm_get_cursor_hint(int32_t mx, int32_t my);

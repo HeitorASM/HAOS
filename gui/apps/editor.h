@@ -1,5 +1,5 @@
 #pragma once
-#include "../window.h"
+#include "../core/window.h"
 
 #define EDITOR_COLS      100     // largura máxima de linha (colunas)
 #define EDITOR_MAX_LINES 500     // número máximo de linhas editáveis

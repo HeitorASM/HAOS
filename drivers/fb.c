@@ -288,7 +288,113 @@ static const uint8_t CURSOR_SPRITE[16][12] = {
     {0,0,0,0,0,0,0,0,2,2,0,0},
 };
 
-void fb_draw_cursor(uint32_t cx, uint32_t cy) {
+// Sprites 12x12 de seta-dupla para redimensionamento, no mesmo
+// esquema de cores do cursor normal (1=branco, 2=preto, 0=transparente).
+// Desenhados centralizados no hotspot (cursor "flutua" sobre o ponto
+// exato da borda/canto, diferente da seta normal que aponta a partir
+// do canto superior esquerdo do sprite).
+
+// <-> horizontal (bordas esquerda/direita)
+static const uint8_t CURSOR_RESIZE_H_SPRITE[12][12] = {
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,2,0,0,0,0,2,0,0,0},
+    {0,0,2,1,2,0,0,2,1,2,0,0},
+    {0,2,1,1,2,2,2,2,1,1,2,0},
+    {2,1,1,1,1,1,1,1,1,1,1,2},
+    {2,1,1,1,1,1,1,1,1,1,1,2},
+    {0,2,1,1,2,2,2,2,1,1,2,0},
+    {0,0,2,1,2,0,0,2,1,2,0,0},
+    {0,0,0,2,0,0,0,0,2,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0},
+};
+
+// seta dupla vertical (bordas topo/baixo)
+static const uint8_t CURSOR_RESIZE_V_SPRITE[12][12] = {
+    {0,0,0,0,2,2,2,0,0,0,0,0},
+    {0,0,0,2,1,1,1,2,0,0,0,0},
+    {0,0,2,1,1,1,1,1,2,0,0,0},
+    {0,2,1,1,1,1,1,1,1,2,0,0},
+    {0,0,0,0,2,1,2,0,0,0,0,0},
+    {0,0,0,0,2,1,2,0,0,0,0,0},
+    {0,0,0,0,2,1,2,0,0,0,0,0},
+    {0,0,0,0,2,1,2,0,0,0,0,0},
+    {0,2,1,1,1,1,1,1,1,2,0,0},
+    {0,0,2,1,1,1,1,1,2,0,0,0},
+    {0,0,0,2,1,1,1,2,0,0,0,0},
+    {0,0,0,0,2,2,2,0,0,0,0,0},
+};
+
+// seta dupla diagonal "\" (cantos topo-esquerdo / baixo-direito)
+static const uint8_t CURSOR_RESIZE_DIAG1_SPRITE[12][12] = {
+    {2,2,2,2,0,0,0,0,0,0,0,0},
+    {2,1,1,1,2,0,0,0,0,0,0,0},
+    {2,1,1,2,0,0,0,0,0,0,0,0},
+    {2,1,2,1,2,0,0,0,0,0,0,0},
+    {0,2,0,2,1,2,0,0,0,0,0,0},
+    {0,0,0,0,2,1,2,0,0,0,0,0},
+    {0,0,0,0,0,2,1,2,0,2,0,0},
+    {0,0,0,0,0,0,2,1,2,1,2,0},
+    {0,0,0,0,0,0,0,2,1,1,2,0},
+    {0,0,0,0,0,0,0,0,2,1,1,2},
+    {0,0,0,0,0,0,0,0,0,2,1,2},
+    {0,0,0,0,0,0,0,0,0,0,2,2},
+};
+
+// seta dupla diagonal "/" (cantos topo-direito / baixo-esquerdo)
+static const uint8_t CURSOR_RESIZE_DIAG2_SPRITE[12][12] = {
+    {0,0,0,0,0,0,0,0,2,2,2,2},
+    {0,0,0,0,0,0,0,2,1,1,1,2},
+    {0,0,0,0,0,0,0,2,1,1,2,0},
+    {0,0,0,0,0,0,0,2,1,2,1,2},
+    {0,0,0,0,0,0,2,1,2,0,2,0},
+    {0,0,0,0,0,2,1,2,0,0,0,0},
+    {0,0,2,0,2,1,2,0,0,0,0,0},
+    {0,2,1,2,1,2,0,0,0,0,0,0},
+    {0,2,1,1,2,0,0,0,0,0,0,0},
+    {2,1,1,2,0,0,0,0,0,0,0,0},
+    {2,1,2,0,0,0,0,0,0,0,0,0},
+    {2,2,0,0,0,0,0,0,0,0,0,0},
+};
+
+// Desenha um sprite 12x12 centralizado no ponto (cx, cy) — usado
+// pelos cursores de resize, que devem "flutuar" sobre o hotspot em
+// vez de apontar a partir do canto (como a seta normal faz).
+static void fb_draw_cursor_sprite_centered(uint32_t cx, uint32_t cy,
+                                           const uint8_t sprite[12][12]) {
+    uint32_t* buf = fb_target();
+    int32_t ox = (int32_t)cx - 6, oy = (int32_t)cy - 6;
+    for (int r = 0; r < 12; r++) {
+        for (int c = 0; c < 12; c++) {
+            if (!sprite[r][c]) continue;
+            int32_t px = ox + c, py = oy + r;
+            if (px < 0 || py < 0 || (uint32_t)px >= fb_w || (uint32_t)py >= fb_h) continue;
+            uint32_t* line = (uint32_t*)((uint8_t*)buf + (uint32_t)py * fb_pitch);
+            line[px] = (sprite[r][c] == 1) ? 0xFFFFFF : 0x000000;
+        }
+    }
+}
+
+void fb_draw_cursor(uint32_t cx, uint32_t cy, CursorType type) {
+    switch (type) {
+        case CURSOR_RESIZE_H:
+            fb_draw_cursor_sprite_centered(cx, cy, CURSOR_RESIZE_H_SPRITE);
+            return;
+        case CURSOR_RESIZE_V:
+            fb_draw_cursor_sprite_centered(cx, cy, CURSOR_RESIZE_V_SPRITE);
+            return;
+        case CURSOR_RESIZE_DIAG1:
+            fb_draw_cursor_sprite_centered(cx, cy, CURSOR_RESIZE_DIAG1_SPRITE);
+            return;
+        case CURSOR_RESIZE_DIAG2:
+            fb_draw_cursor_sprite_centered(cx, cy, CURSOR_RESIZE_DIAG2_SPRITE);
+            return;
+        case CURSOR_NORMAL:
+        default:
+            break;
+    }
+
     uint32_t* buf = fb_target();
     for (int r = 0; r < 16; r++) {
         for (int c = 0; c < 12; c++) {

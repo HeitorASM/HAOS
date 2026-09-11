@@ -1,10 +1,10 @@
 #pragma once
-#include "../kernel/types.h"
+#include "../../kernel/types.h"
 #include "theme.h"
 
 //  widget.h — Widget Core do HAOS
 //
-//  Substitui o sistema anterior (Window C + Window2/Widget C++
+//  Substitui o sistema anterior (Window C + Widget C++
 //  coexistindo, cada um com seu próprio conjunto de callbacks
 //  fixos: on_click/on_key/on_drag/on_mouse_up espalhados e
 //  inconsistentes) por UM único sistema:

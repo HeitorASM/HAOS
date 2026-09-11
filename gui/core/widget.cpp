@@ -1,7 +1,7 @@
 //  widget.cpp — Implementação do Widget Core (v2)
 
 #include "widget.h"
-#include "../kernel/memory.h"
+#include "../../kernel/memory.h"
 
 //  WidgetList
 

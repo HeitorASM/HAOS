@@ -1,6 +1,6 @@
-// gui/screens/desktop.cpp — Loop principal do desktop (migrado para Window v2)
+// gui/screens/desktop.cpp — Loop principal do desktop
 #include "desktop.h"
-#include "../wm.h"
+#include "../core/wm.h"
 #include "../elements/icons.h"
 #include "../elements/taskbar.h"
 #include "../elements/startmenu.h"
@@ -26,17 +26,6 @@ static uint64_t last_render_tick = 0;
 static void handle_desktop_key(uint8_t c);
 static void desktop_handle_click(int32_t mx, int32_t my, uint32_t sw, uint32_t sh);
 
-// -------------------------------------------------------------
-// Tratamento de teclado
-//
-// Removidos os atalhos globais de letra única (S/T/A/E/C/R) que
-// existiam antes — sistemas reais não capturam letras soltas como
-// hotkey global (isso colide com digitar normalmente em qualquer
-// janela focada, como no terminal). O único atalho de teclado que
-// sobra é ESC para fechar o menu iniciar, que é um padrão universal
-// em qualquer SO. Abrir apps agora é só via clique (ícones do
-// desktop, itens do menu iniciar, ou taskbar).
-// -------------------------------------------------------------
 static void handle_desktop_key(uint8_t c) {
     if (c == 27) {
         start_menu_open = false;
@@ -115,11 +104,6 @@ extern "C" void run_desktop(void) {
                 if (mx >= 4 && mx < 4 + START_BTN_W) {
                     start_menu_open = !start_menu_open;
                 } else {
-                    // Antes: só checava um retângulo hardcoded para o
-                    // terminal. Agora: taskbar_hit_test percorre TODAS
-                    // as janelas ativas (a mesma lista desenhada por
-                    // draw_taskbar), então clicar no item de QUALQUER
-                    // janela (não só o terminal) foca/restaura ela.
                     Window* clicked = taskbar_hit_test(mx, my);
                     if (clicked) {
                         if (clicked->minimized) wm_restore(clicked);
@@ -130,13 +114,6 @@ extern "C" void run_desktop(void) {
                 }
             }
             else if (start_menu_open) {
-                // Antes: cálculo manual de mh=278 (hardcoded, errado)
-                // e rel_y/34 duplicando a lógica de layout de
-                // startmenu.cpp — exatamente o tipo de duplicação que
-                // causava o bug de dessincronia. Agora usa
-                // start_menu_hit_test(), a mesma fonte de verdade que
-                // desenha o menu, então clique e desenho nunca mais
-                // saem de sincronia entre si.
                 int item = start_menu_hit_test(mx, my);
                 if (item == 0) {
                     if (!terminal_win || !terminal_win->active)
@@ -194,7 +171,11 @@ extern "C" void run_desktop(void) {
         if (start_menu_open)
             draw_start_menu();
 
-        fb_draw_cursor((uint32_t)mx, (uint32_t)my);
+        // Cursor muda de ícone ao passar sobre uma borda/canto
+        // redimensionável da janela focada (comportamento padrão
+        // em Windows/GNOME/macOS) — resto do tempo é a seta normal.
+        CursorType cursor = wm_get_cursor_hint(mx, my);
+        fb_draw_cursor((uint32_t)mx, (uint32_t)my, cursor);
         fb_flip();
     }
 }

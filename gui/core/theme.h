@@ -1,5 +1,5 @@
 #pragma once
-#include "../kernel/types.h"
+#include "../../kernel/types.h"
 
 
 struct Theme {
@@ -63,7 +63,7 @@ const Theme* theme_current(void);
 const Theme* theme_set(const Theme* new_theme);
 
 // O tema padrão do HAOS (mesma paleta usada até agora no projeto:
-// azul escuro, consistente com Window2/boot/welcome existentes).
+// azul escuro, consistente com Window/boot/welcome existentes).
 const Theme* theme_default(void);
 
 #ifdef __cplusplus
