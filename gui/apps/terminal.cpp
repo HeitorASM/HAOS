@@ -362,6 +362,7 @@ static void term_execute(TermState* t, const char* input) {
     } else if (kstrcmp(cmd, "clear") == 0) {
         for (int i = 0; i < TERM_HIST; i++) kmemset(t->lines[i], 0, TERM_COLS+1);
         t->num_lines = 1;
+        t->scroll_offset = 0;
     } else if (kstrcmp(cmd, "echo") == 0) {
         term_println(t, args);
     } else if (kstrcmp(cmd, "about") == 0) {
@@ -451,7 +452,8 @@ public:
         int track_h = output_rows * FONT_H;
         m_scrollbar.bounds = Rect{track_x, by, ScrollBar::DEFAULT_WIDTH, (uint32_t)track_h};
         m_scrollbar.set_range(t->num_lines, output_rows);
-        m_scrollbar.set_value(t->scroll_offset);
+        // O terminal conta a partir do fim; o ScrollBar conta a partir do topo.
+        m_scrollbar.set_value(max_offset - t->scroll_offset);
         int start_line = t->num_lines - output_rows - t->scroll_offset;
         if (start_line < 0) start_line = 0;
         for (int r = 0; r < output_rows; r++) {
@@ -524,7 +526,8 @@ public:
                 bar_ev.y = y - track_y;
                 EventResult result = m_scrollbar.on_event(bar_ev);
                 if (result == EventResult::Handled) {
-                    t->scroll_offset = m_scrollbar.value();
+                    int max_offset = t->num_lines > output_rows ? t->num_lines - output_rows : 0;
+                    t->scroll_offset = max_offset - m_scrollbar.value();
                     return result;
                 }
                 if (on_bar) return EventResult::Handled;
