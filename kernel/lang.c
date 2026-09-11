@@ -86,6 +86,10 @@ static const char* const g_pt[STR_COUNT] = {
     [STR_CONFIG_LANG_PT]        = "Portugues",
     [STR_CONFIG_LANG_EN]        = "English",
     [STR_CONFIG_FOOTER_HINT]    = "j/k: navegar  1/2/3: modo  L: idioma  ESC: fechar",
+    [STR_CONFIG_CATEGORY_SYSTEM]          = "Sistema",
+    [STR_CONFIG_CATEGORY_PERSONALIZATION] = "Personalizacao",
+    [STR_CONFIG_CATEGORY_ABOUT]           = "Sobre o Sistema",
+    [STR_CONFIG_SECTION_LANGUAGE_DESC]    = "Idioma do sistema e da interface.",
 
     [STR_TERM_WELCOME_1]        = "  HAOS Shell v1.2  --  Digite 'help' para ajuda",
     [STR_TERM_WELCOME_2]        = "  Use o mouse para arrastar esta janela.",
@@ -173,6 +177,10 @@ static const char* const g_pt[STR_COUNT] = {
     [STR_EDITOR_PASTED]        = "Colado!",
     [STR_EDITOR_SAVEAS_PROMPT] = "Salvar como (digite o nome do arquivo):",
     [STR_EDITOR_SAVEAS_HINT]   = "[Enter] Salvar   [ESC] Cancelar",
+    [STR_EDITOR_UNTITLED]      = "(sem nome)",
+    [STR_EDITOR_LINE_LABEL]    = "Lin ",
+    [STR_EDITOR_COL_LABEL]     = "  Col ",
+    [STR_EDITOR_CHARS_LABEL]   = "  Caract ",
     [STR_ICON_EDITOR]          = "Bloco de Notas",
     [STR_TERM_HELP_EDIT]       = "  edit <nome>   -- abre o bloco de notas",
 };
@@ -257,6 +265,10 @@ static const char* const g_en[STR_COUNT] = {
     [STR_CONFIG_LANG_PT]        = "Portuguese",
     [STR_CONFIG_LANG_EN]        = "English",
     [STR_CONFIG_FOOTER_HINT]    = "j/k: navigate  1/2/3: mode  L: language  ESC: close",
+    [STR_CONFIG_CATEGORY_SYSTEM]          = "System",
+    [STR_CONFIG_CATEGORY_PERSONALIZATION] = "Personalization",
+    [STR_CONFIG_CATEGORY_ABOUT]           = "About This System",
+    [STR_CONFIG_SECTION_LANGUAGE_DESC]    = "System and interface language.",
 
     [STR_TERM_WELCOME_1]        = "  HAOS Shell v1.2  --  Type 'help' for assistance",
     [STR_TERM_WELCOME_2]        = "  Use the mouse to drag this window.",
@@ -344,6 +356,10 @@ static const char* const g_en[STR_COUNT] = {
     [STR_EDITOR_PASTED]        = "Pasted!",
     [STR_EDITOR_SAVEAS_PROMPT] = "Save as (type the file name):",
     [STR_EDITOR_SAVEAS_HINT]   = "[Enter] Save   [ESC] Cancel",
+    [STR_EDITOR_UNTITLED]      = "(untitled)",
+    [STR_EDITOR_LINE_LABEL]    = "Ln ",
+    [STR_EDITOR_COL_LABEL]     = "  Col ",
+    [STR_EDITOR_CHARS_LABEL]   = "  Chars ",
     [STR_ICON_EDITOR]          = "Notepad",
     [STR_TERM_HELP_EDIT]       = "  edit <name>   -- opens the notepad",
 };

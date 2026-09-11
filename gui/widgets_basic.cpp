@@ -1,9 +1,11 @@
 //  widgets_basic.cpp — Button, Label, Checkbox
+
 #include "widgets_basic.h"
 #include "../kernel/memory.h"
 #include "../drivers/fb.h"
 
 //  Button
+
 Button::Button(int32_t x, int32_t y, uint32_t w, uint32_t h, const char* label)
     : Widget(x, y, w, h), m_pressed(false), m_hovered(false), m_on_click(nullptr)
 {
@@ -17,9 +19,10 @@ void Button::draw(int32_t ox, int32_t oy) {
     int32_t ay = oy + bounds.y;
 
     uint32_t bg = m_pressed ? t->button_bg_pressed
+                : m_active_style ? t->button_bg_pressed  // mesmo tom do "pressed" para indicar seleção persistente
                 : m_hovered ? t->button_bg_hover
                             : t->button_bg;
-    uint32_t border = focused ? t->button_border_focused : t->button_border;
+    uint32_t border = (focused || m_active_style) ? t->button_border_focused : t->button_border;
 
     fb_fill_rect((uint32_t)ax, (uint32_t)ay, bounds.w, bounds.h, bg);
     fb_draw_rect((uint32_t)ax, (uint32_t)ay, bounds.w, bounds.h, border, 1);

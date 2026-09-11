@@ -15,6 +15,8 @@ public:
 
     void draw(int32_t ox, int32_t oy) override;
 
+    EventResult on_event(const WidgetEvent& ev) override;
+
     // ---- Estado gerenciado pelo WM (wm.cpp) ----
     bool     active;
     bool     minimized;

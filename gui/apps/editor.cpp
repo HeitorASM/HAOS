@@ -41,6 +41,15 @@ struct EditorState {
     int  saveas_len;
 };
 
+static uint32_t editor_total_chars(EditorState* e) {
+    uint32_t total = 0;
+    for (int i = 0; i < e->num_lines; i++) {
+        total += (uint32_t)kstrlen(e->lines[i]);
+        if (i < e->num_lines - 1) total += 1; // '\n' entre linhas, não após a última
+    }
+    return total;
+}
+
 static void editor_set_status(EditorState* e, const char* msg, uint64_t ticks) {
     kstrcpy(e->status_msg, msg);
     e->status_until = ticks + 100;
@@ -355,6 +364,7 @@ struct EditorLayout {
 class EditorWindow : public Window {
 public:
     EditorState m_state;
+    bool m_title_shows_dirty = false; // rastreia o "*" já refletido no título
 
     EditorWindow(int32_t x, int32_t y, uint32_t w, uint32_t h, const char* title)
         : Window(x, y, w, h, title, WinType::Terminal)
@@ -374,6 +384,26 @@ public:
         e->saveas_open    = false;
         e->saveas_buf[0]  = 0;
         e->saveas_len     = 0;
+    }
+
+    void sync_title_dirty_indicator() {
+        if (m_state.dirty == m_title_shows_dirty) return; 
+
+        size_t len = kstrlen(title);
+        if (m_state.dirty) {
+            // Adiciona " *" no fim, respeitando o limite do buffer
+            if (len + 2 < sizeof(title)) {
+                title[len]     = ' ';
+                title[len + 1] = '*';
+                title[len + 2] = '\0';
+            }
+        } else {
+            // Remove o " *" adicionado anteriormente
+            if (len >= 2 && title[len - 2] == ' ' && title[len - 1] == '*') {
+                title[len - 2] = '\0';
+            }
+        }
+        m_title_shows_dirty = m_state.dirty;
     }
 
     EditorLayout compute_layout() const {
@@ -411,6 +441,7 @@ public:
     }
 
     void draw(int32_t ox, int32_t oy) override {
+        sync_title_dirty_indicator();
         Window::draw(ox, oy);
         if (!active || minimized) return;
 
@@ -467,15 +498,35 @@ public:
         fb_fill_rect((uint32_t)bx, (uint32_t)sy, (uint32_t)bw, 1, 0x223A66);
 
         char status[128];
-        kstrcpy(status, e->filename[0] ? e->filename : "(sem nome)");
+        kstrcpy(status, e->filename[0] ? e->filename : tr(STR_EDITOR_UNTITLED));
         if (e->dirty) kstrcat(status, " *");
-        kstrcat(status, "   [Ctrl+S] Salvar   [ESC] Fechar");
         fb_draw_string((uint32_t)(bx + 4), (uint32_t)(sy + 3), status, COLOR_TEXT_DIM, 0, true);
 
+        // ---- Contador de Linha/Coluna/Caracteres — canto direito
+        //      da barra de status, estilo editores modernos (VS Code,
+        //      Notepad++). Substituído temporariamente pela mensagem
+        //      de status (Salvo/Copiado/etc) quando houver uma ativa,
+        //      já que os dois ocupavam o mesmo canto antes.
         if (e->status_msg[0]) {
             uint32_t tw = fb_text_width(e->status_msg);
             fb_draw_string((uint32_t)(bx + bw - (int32_t)tw - 4), (uint32_t)(sy + 3),
                            e->status_msg, COLOR_ACCENT, 0, true);
+        } else {
+            char counter[64];
+            char numbuf[16];
+            kstrcpy(counter, tr(STR_EDITOR_LINE_LABEL));
+            kuitoa((uint64_t)(e->cursor_row + 1), numbuf);
+            kstrcat(counter, numbuf);
+            kstrcat(counter, tr(STR_EDITOR_COL_LABEL));
+            kuitoa((uint64_t)(e->cursor_col + 1), numbuf);
+            kstrcat(counter, numbuf);
+            kstrcat(counter, tr(STR_EDITOR_CHARS_LABEL));
+            kuitoa((uint64_t)editor_total_chars(e), numbuf);
+            kstrcat(counter, numbuf);
+
+            uint32_t tw = fb_text_width(counter);
+            fb_draw_string((uint32_t)(bx + bw - (int32_t)tw - 4), (uint32_t)(sy + 3),
+                           counter, COLOR_TEXT_DIM, 0, true);
         }
 
         if (e->saveas_open) {
@@ -644,6 +695,8 @@ static bool editor_save_as(EditorState* e, EditorWindow* win, const char* name) 
         kstrcat(title, " -- ");
         kstrcat(title, e->filename);
         kstrncpy(win->title, title, sizeof(win->title) - 1);
+
+        win->m_title_shows_dirty = false;
     }
     return ok;
 }

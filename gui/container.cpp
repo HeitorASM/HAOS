@@ -1,7 +1,13 @@
+// ============================================================
+//  container.cpp — Container, Panel, Canvas
+// ============================================================
+
 #include "container.h"
 #include "../drivers/fb.h"
 
+// ============================================================
 //  Container
+// ============================================================
 
 void Container::draw(int32_t ox, int32_t oy) {
     int32_t ax = ox + bounds.x;
@@ -10,8 +16,24 @@ void Container::draw(int32_t ox, int32_t oy) {
 }
 
 EventResult Container::on_event(const WidgetEvent& ev) {
-    int32_t ax = bounds.x;
-    int32_t ay = bounds.y;
+    // IMPORTANTE: quando on_event() é chamado, `ev` já está em
+    // coordenadas RELATIVAS A ESTE PRÓPRIO CONTAINER (é assim que
+    // todo Widget::on_event funciona — Button, TextField, etc,
+    // tratam ev.x/ev.y como locais). Por isso o offset usado para
+    // despachar aos filhos é ZERO, não bounds.x/bounds.y deste
+    // container: bounds.x/y já foi "consumido" no nível acima
+    // (quem chamou nosso on_event já subtraiu nosso próprio
+    // deslocamento antes de nos entregar o evento).
+    //
+    // Bug anterior: usava ax=bounds.x/ay=bounds.y daqui, o que só
+    // por coincidência funcionava quando ESTE Container era a
+    // Window raiz (cujo bounds.x/y já são absolutos de tela e o
+    // WM nunca pré-subtrai nada). Qualquer Container aninhado dentro
+    // de outro (Panel dentro de Window, VStack dentro de Panel...)
+    // sofria dupla subtração e os cliques nunca acertavam os widgets
+    // mais profundos — exatamente o bug de "botões não respondem".
+    int32_t ax = 0;
+    int32_t ay = 0;
 
     // Clique dentro do container: além de despachar para o filho
     // sob o cursor, atualiza qual filho tem o foco (só faz sentido
@@ -92,7 +114,9 @@ bool Container::focus_next() {
     return false;
 }
 
+// ============================================================
 //  Panel
+// ============================================================
 
 void Panel::draw(int32_t ox, int32_t oy) {
     const Theme* t = theme_current();
@@ -108,7 +132,9 @@ void Panel::draw(int32_t ox, int32_t oy) {
     Container::draw(ox, oy);
 }
 
+// ============================================================
 //  Canvas
+// ============================================================
 
 void Canvas::draw(int32_t ox, int32_t oy) {
     int32_t ax = ox + bounds.x;

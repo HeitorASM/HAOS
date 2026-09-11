@@ -115,18 +115,28 @@ extern "C" void run_desktop(void) {
                 if (mx >= 4 && mx < 4 + START_BTN_W) {
                     start_menu_open = !start_menu_open;
                 } else {
-
+                    // Antes: só checava um retângulo hardcoded para o
+                    // terminal. Agora: taskbar_hit_test percorre TODAS
+                    // as janelas ativas (a mesma lista desenhada por
+                    // draw_taskbar), então clicar no item de QUALQUER
+                    // janela (não só o terminal) foca/restaura ela.
                     Window* clicked = taskbar_hit_test(mx, my);
                     if (clicked) {
                         if (clicked->minimized) wm_restore(clicked);
-                        else if (clicked->focused) wm_minimize(clicked); 
+                        else if (clicked->focused) wm_minimize(clicked); // clicar de novo na já focada minimiza (padrão Windows)
                         else wm_focus(clicked);
                         start_menu_open = false;
                     }
                 }
             }
             else if (start_menu_open) {
-
+                // Antes: cálculo manual de mh=278 (hardcoded, errado)
+                // e rel_y/34 duplicando a lógica de layout de
+                // startmenu.cpp — exatamente o tipo de duplicação que
+                // causava o bug de dessincronia. Agora usa
+                // start_menu_hit_test(), a mesma fonte de verdade que
+                // desenha o menu, então clique e desenho nunca mais
+                // saem de sincronia entre si.
                 int item = start_menu_hit_test(mx, my);
                 if (item == 0) {
                     if (!terminal_win || !terminal_win->active)
@@ -160,7 +170,7 @@ extern "C" void run_desktop(void) {
         if (pressed && was_pressed)
             wm_mouse_move(mx, my);
         if (!pressed && was_pressed)
-            wm_mouse_up();
+            wm_mouse_up(mx, my);
 
         was_pressed = pressed;
 

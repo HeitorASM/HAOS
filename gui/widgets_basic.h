@@ -1,15 +1,10 @@
 #pragma once
 #include "widget.h"
 
-// ============================================================
 //  widgets_basic.h — Button, Label, Checkbox
-//
-//  Todos usam theme_current() para cor — nenhuma cor hardcoded
-//  aqui. Trocar o tema ativo muda a aparência de todos sem
-//  recompilar nenhum widget.
-// ============================================================
 
 //  Button
+
 class Button : public Widget {
 public:
     typedef void (*ClickCallback)(Button* self);
@@ -22,14 +17,36 @@ public:
     void set_on_click(ClickCallback cb) { m_on_click = cb; }
     const char* label() const { return m_label; }
 
+    // Marca o botão como "ativo/selecionado" visualmente (borda de
+    // destaque, mesmo estilo do foco por teclado) — útil para botões
+    // usados como seletor de opção (ex.: idioma, modo de exibição),
+    // onde o app quer indicar qual opção está atualmente escolhida
+    // sem que o botão precise estar de fato com o foco de teclado.
+    void set_active_style(bool active) { m_active_style = active; }
+
+    // Tag numérica livre para o app associar a este botão (ex.: o
+    // índice de um item numa lista dinâmica de botões, como o
+    // wallpaper selecionado). O callback de clique (ClickCallback)
+    // só recebe o próprio Button* — sem isso, não haveria como saber
+    // "qual" botão específico foi clicado quando vários botões
+    // idênticos em estrutura compartilham a mesma função de callback
+    // (funções livres em C++ não capturam contexto por closure).
+    // Uso típico: button->set_tag(i); ... no callback: self->tag()
+    void set_tag(int tag) { m_tag = tag; }
+    int  tag() const { return m_tag; }
+
 private:
     char          m_label[64];
     bool          m_pressed;
     bool          m_hovered;
+    bool          m_active_style = false;
+    int           m_tag = -1;
     ClickCallback m_on_click;
 };
 
+
 //  Label
+
 class Label : public Widget {
 public:
     Label(int32_t x, int32_t y, const char* text);
@@ -45,7 +62,9 @@ private:
     char m_text[128];
 };
 
+
 //  Checkbox
+
 class Checkbox : public Widget {
 public:
     typedef void (*ToggleCallback)(Checkbox* self, bool checked);

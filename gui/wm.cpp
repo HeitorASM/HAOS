@@ -270,11 +270,12 @@ bool wm_mouse_down(int32_t mx, int32_t my) {
             if (!win->minimized && in_content(win, mx, my)) {
                 s_content_mouse_down[s_focused_idx] = true;
                 WidgetEvent ev{EventType::MouseDown, mx, my, 0};
-                // Container::on_event espera coordenadas relativas
-                // ao PAI da janela (0,0 = canto da tela); a própria
-                // janela soma bounds.x/y internamente ao despachar
-                // para os filhos, então passamos as coordenadas
-                // absolutas de tela diretamente.
+                // Window::on_event() converte estas coordenadas
+                // absolutas de tela para relativas à própria janela
+                // antes de despachar à árvore de widgets (ver
+                // window.cpp) — o resto da cadeia (Panel, VStack,
+                // Button...) trabalha de forma consistente em
+                // coordenadas relativas ao pai imediato.
                 win->on_event(ev);
             }
             return true;
@@ -354,11 +355,20 @@ void wm_mouse_move(int32_t mx, int32_t my) {
     }
 }
 
-void wm_mouse_up(void) {
+void wm_mouse_up(int32_t mx, int32_t my) {
     for (int i = 0; i < MAX_WINDOWS; i++) {
         Window* win = s_windows[i];
         if (win && s_content_mouse_down[i]) {
-            WidgetEvent ev{EventType::MouseUp, 0, 0, 0};
+            // FIX: antes usava ev.x=0, ev.y=0 (posição zerada), o que
+            // fazia bounds.contains() falhar em qualquer widget real
+            // dentro da árvore — MouseUp nunca "acertava" o botão, e
+            // por isso o callback de clique (que dispara no MouseUp,
+            // não no MouseDown) nunca era chamado. O "efeito visual"
+            // de pressionar funcionava (MouseDown tem posição real),
+            // mas a ação nunca disparava. Agora usa a posição atual
+            // real do cursor, igual MouseDown/MouseMove/MouseDrag já
+            // faziam.
+            WidgetEvent ev{EventType::MouseUp, mx, my, 0};
             win->on_event(ev);
         }
         if (win) {

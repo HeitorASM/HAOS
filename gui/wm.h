@@ -57,4 +57,4 @@ void    wm_dispatch_key(uint8_t c);
 // "vazou" para ícones/taskbar por baixo).
 bool    wm_mouse_down(int32_t mx, int32_t my);
 void    wm_mouse_move(int32_t mx, int32_t my);
-void    wm_mouse_up(void);
+void    wm_mouse_up(int32_t mx, int32_t my);

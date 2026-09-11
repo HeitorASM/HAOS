@@ -25,6 +25,28 @@ void Window::on_resized() {
     m_children.dispatch(ev, 0, 0);
 }
 
+EventResult Window::on_event(const WidgetEvent& ev) {
+    bool is_mouse = ev.type == EventType::MouseDown ||
+                    ev.type == EventType::MouseUp   ||
+                    ev.type == EventType::MouseMove ||
+                    ev.type == EventType::MouseDrag;
+
+    if (!is_mouse) {
+        // KeyDown/Focus/Blur/Resize não carregam coordenadas de
+        // posição — repassa direto para a lógica comum de Container.
+        return Container::on_event(ev);
+    }
+
+    // Converte de absoluto-de-tela (como o WM em wm.cpp envia) para
+    // relativo à própria janela — a partir daqui, toda a árvore de
+    // widgets (Panel, VStack, Button...) trabalha de forma
+    // consistente em coordenadas relativas ao pai imediato.
+    WidgetEvent local = ev;
+    local.x = ev.x - bounds.x;
+    local.y = ev.y - bounds.y;
+    return Container::on_event(local);
+}
+
 Rect Window::content_area_absolute() const {
     return Rect{
         bounds.x + (int32_t)BORDER,

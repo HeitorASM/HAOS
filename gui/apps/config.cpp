@@ -1,236 +1,235 @@
 #include "config.h"
 #include "../wm.h"
 #include "../wallpaper.h"
+#include "../sidebar_nav.h"
+#include "../container.h"
+#include "../layout.h"
+#include "../widgets_basic.h"
 #include "../../drivers/fb.h"
 #include "../../kernel/types.h"
 #include "../../kernel/memory.h"
 #include "../../kernel/sysinfo.h"
 #include "../../kernel/lang.h"
 
-#define CFG_W   440
-#define CFG_H   430
+#define CFG_W   560
+#define CFG_H   440
+#define SIDEBAR_W 160
 
-#define CFG_BG      0x0E1220
-#define CFG_ACCENT  0x5AA0FF
-#define CFG_TEXT    0xE4F0FF
-#define CFG_DIM     0x86A0C0
-#define CFG_SEL     0x1E3E78
-#define CFG_BORDER  0x33528E
+enum ConfigCategory { CAT_SYSTEM = 0, CAT_PERSONALIZATION = 1, CAT_ABOUT = 2 };
 
-#define LIST_X   16
-#define LIST_W   (CFG_W - 32)
-#define LIST_Y   40
-#define ITEM_H   26
-
-static inline int mode_section_y(void) {
-    return LIST_Y + (wallpaper_count() + 1) * ITEM_H + 14;
-}
-#define MODE_W  108
-#define MODE_H  26
-
-static inline int lang_section_y(void) {
-    return mode_section_y() + MODE_H + 30;
-}
-#define LANG_W  108
-#define LANG_H  26
-
-static inline int hw_section_y(void) {
-    return lang_section_y() + LANG_H + 30;
-}
-
-static void draw_info_row(int cx, int cy, int y, const char* key, const char* val) {
-    fb_draw_string((uint32_t)(cx + LIST_X),      (uint32_t)(cy + y), key, CFG_DIM,  0, true);
-    fb_draw_string((uint32_t)(cx + LIST_X + 120), (uint32_t)(cy + y), val, CFG_TEXT, 0, true);
-}
-
-// ============================================================
-//  ConfigWindow — mesmo padrão de AboutWindow: subclasse de
-//  Window sobrescrevendo draw() para o conteúdo, e on_event()
-//  para tratar clique/tecla.
-// ============================================================
-class ConfigWindow : public Window {
+// ---- Painel: Sistema (idioma) ----
+class SystemPanel : public Panel {
 public:
-    ConfigWindow(int32_t x, int32_t y, const char* title)
-        : Window(x, y, CFG_W, CFG_H, title, WinType::Dialog) {}
+    SystemPanel(int32_t x, int32_t y, uint32_t w, uint32_t h) : Panel(x, y, w, h, false) {
+        VStack* stack = new VStack(16, 16, w - 32);
 
+        Label* title = new Label(0, 0, tr(STR_CONFIG_CATEGORY_SYSTEM));
+        stack->add(title);
+
+        Label* lang_label = new Label(0, 0, tr(STR_CONFIG_LANGUAGE));
+        stack->add(lang_label);
+
+        Label* lang_desc = new Label(0, 0, tr(STR_CONFIG_SECTION_LANGUAGE_DESC));
+        stack->add(lang_desc);
+
+        HStack* lang_row = new HStack(0, 0, 26);
+        m_btn_pt = new Button(0, 0, 108, 26, tr(STR_CONFIG_LANG_PT));
+        m_btn_en = new Button(0, 0, 108, 26, tr(STR_CONFIG_LANG_EN));
+        m_btn_pt->set_on_click([](Button*) { lang_set(LANG_PT); });
+        m_btn_en->set_on_click([](Button*) { lang_set(LANG_EN); });
+        lang_row->add(m_btn_pt);
+        lang_row->add(m_btn_en);
+        stack->add(lang_row);
+
+        add(stack);
+    }
+
+    // Destaca visualmente qual idioma está ativo — chamado a cada
+    // draw() já que lang_get() pode mudar por fora (ex.: se algum
+    // dia outro app também trocar o idioma).
     void draw(int32_t ox, int32_t oy) override {
-        Window::draw(ox, oy);
-        if (!active || minimized) return;
+        Lang cur = lang_get();
+        m_btn_pt->set_active_style(cur == LANG_PT);
+        m_btn_en->set_active_style(cur == LANG_EN);
+        Panel::draw(ox, oy);
+    }
 
-        Rect content = content_area_absolute();
-        int cx = content.x, cy = content.y;
-        int cw = (int)content.w;
+private:
+    Button* m_btn_pt;
+    Button* m_btn_en;
+};
 
-        fb_fill_rect((uint32_t)cx, (uint32_t)cy, (uint32_t)cw, content.h, CFG_BG);
-
-        fb_draw_string((uint32_t)(cx + LIST_X), (uint32_t)(cy + 12),
-                       tr(STR_CONFIG_WALLPAPER), CFG_ACCENT, 0, true);
+// ---- Painel: Personalização (wallpaper + modo) ----
+class PersonalizationPanel : public Panel {
+public:
+    PersonalizationPanel(int32_t x, int32_t y, uint32_t w, uint32_t h)
+        : Panel(x, y, w, h, false)
+    {
+        VStack* stack = new VStack(16, 16, w - 32);
+        stack->add(new Label(0, 0, tr(STR_CONFIG_CATEGORY_PERSONALIZATION)));
+        stack->add(new Label(0, 0, tr(STR_CONFIG_WALLPAPER)));
 
         int count = wallpaper_count();
-        int cur   = wallpaper_get();
+        m_btn_default = new Button(0, 0, w - 32, 26, tr(STR_CONFIG_DEFAULT_WALLPAPER));
+        m_btn_default->set_on_click([](Button*) { wallpaper_set(-1); });
+        stack->add(m_btn_default);
 
-        {
-            int iy  = cy + LIST_Y;
-            bool sel = (cur == -1);
-            fb_fill_rect((uint32_t)(cx + LIST_X), (uint32_t)iy,
-                        (uint32_t)LIST_W, (uint32_t)(ITEM_H - 2),
-                        sel ? CFG_SEL : CFG_BG);
-            fb_draw_rect((uint32_t)(cx + LIST_X), (uint32_t)iy,
-                        (uint32_t)LIST_W, (uint32_t)(ITEM_H - 2),
-                        sel ? CFG_ACCENT : 0x1C2740, 1);
-            fb_draw_string((uint32_t)(cx + LIST_X + 8), (uint32_t)(iy + 6),
-                          tr(STR_CONFIG_DEFAULT_WALLPAPER), sel ? CFG_ACCENT : CFG_TEXT, 0, true);
+        for (int i = 0; i < count && i < MAX_WALLPAPER_BTNS; i++) {
+            m_btn_wallpaper[i] = new Button(0, 0, w - 32, 26, wallpaper_name(i));
+            m_wallpaper_index[i] = i;
+
+            m_btn_wallpaper[i]->set_tag(i);
+            m_btn_wallpaper[i]->set_on_click([](Button* self) {
+                wallpaper_set(self->tag());
+            });
+            stack->add(m_btn_wallpaper[i]);
         }
+        m_wallpaper_count = count;
 
-        for (int i = 0; i < count; i++) {
-            int iy  = cy + LIST_Y + (i + 1) * ITEM_H;
-            bool sel = (cur == i);
-            fb_fill_rect((uint32_t)(cx + LIST_X), (uint32_t)iy,
-                        (uint32_t)LIST_W, (uint32_t)(ITEM_H - 2),
-                        sel ? CFG_SEL : CFG_BG);
-            fb_draw_rect((uint32_t)(cx + LIST_X), (uint32_t)iy,
-                        (uint32_t)LIST_W, (uint32_t)(ITEM_H - 2),
-                        sel ? CFG_ACCENT : 0x1C2740, 1);
-            fb_draw_string((uint32_t)(cx + LIST_X + 8), (uint32_t)(iy + 6),
-                          wallpaper_name(i), sel ? CFG_ACCENT : CFG_TEXT, 0, true);
+        stack->add(new Label(0, 0, tr(STR_CONFIG_MODE)));
+        HStack* mode_row = new HStack(0, 0, 26);
+        m_btn_fill   = new Button(0, 0, 108, 26, tr(STR_CONFIG_MODE_FILL));
+        m_btn_center = new Button(0, 0, 108, 26, tr(STR_CONFIG_MODE_CENTER));
+        m_btn_tile   = new Button(0, 0, 108, 26, tr(STR_CONFIG_MODE_TILE));
+        m_btn_fill->set_on_click([](Button*)   { wallpaper_set_mode(WALLPAPER_MODE_FILL); });
+        m_btn_center->set_on_click([](Button*) { wallpaper_set_mode(WALLPAPER_MODE_CENTER); });
+        m_btn_tile->set_on_click([](Button*)   { wallpaper_set_mode(WALLPAPER_MODE_TILE); });
+        mode_row->add(m_btn_fill);
+        mode_row->add(m_btn_center);
+        mode_row->add(m_btn_tile);
+        stack->add(mode_row);
+
+        add(stack);
+    }
+
+    void draw(int32_t ox, int32_t oy) override {
+        int cur = wallpaper_get();
+        m_btn_default->set_active_style(cur == -1);
+        for (int i = 0; i < m_wallpaper_count; i++) {
+            m_btn_wallpaper[i]->set_active_style(cur == m_wallpaper_index[i]);
         }
+        WallpaperMode mode = wallpaper_get_mode();
+        m_btn_fill->set_active_style(mode == WALLPAPER_MODE_FILL);
+        m_btn_center->set_active_style(mode == WALLPAPER_MODE_CENTER);
+        m_btn_tile->set_active_style(mode == WALLPAPER_MODE_TILE);
+        Panel::draw(ox, oy);
+    }
 
-        int sy = cy + mode_section_y() - 6;
-        fb_fill_rect((uint32_t)(cx + 8), (uint32_t)sy, (uint32_t)(cw - 16), 1, CFG_BORDER);
+private:
+    static constexpr int MAX_WALLPAPER_BTNS = 6;
+    Button* m_btn_default;
+    Button* m_btn_wallpaper[MAX_WALLPAPER_BTNS];
+    int     m_wallpaper_index[MAX_WALLPAPER_BTNS];
+    int     m_wallpaper_count = 0;
+    Button* m_btn_fill;
+    Button* m_btn_center;
+    Button* m_btn_tile;
+};
 
-        fb_draw_string((uint32_t)(cx + LIST_X), (uint32_t)(cy + mode_section_y()),
-                       tr(STR_CONFIG_MODE), CFG_DIM, 0, true);
+// ---- Painel: Sobre o Sistema (hardware) ----
+class AboutSystemPanel : public Panel {
+public:
+    AboutSystemPanel(int32_t x, int32_t y, uint32_t w, uint32_t h)
+        : Panel(x, y, w, h, false)
+    {
+        VStack* stack = new VStack(16, 16, w - 32);
+        stack->add(new Label(0, 0, tr(STR_CONFIG_CATEGORY_ABOUT)));
 
-        const char* mnames[] = { tr(STR_CONFIG_MODE_FILL), tr(STR_CONFIG_MODE_CENTER), tr(STR_CONFIG_MODE_TILE) };
-        int cur_mode = (int)wallpaper_get_mode();
-        for (int m = 0; m < 3; m++) {
-            int bx  = cx + LIST_X + m * (MODE_W + 8);
-            int by  = cy + mode_section_y() + 18;
-            bool sel = (cur_mode == m);
-            fb_fill_rect((uint32_t)bx, (uint32_t)by, (uint32_t)MODE_W, (uint32_t)MODE_H,
-                        sel ? CFG_SEL : CFG_BG);
-            fb_draw_rect((uint32_t)bx, (uint32_t)by, (uint32_t)MODE_W, (uint32_t)MODE_H,
-                        sel ? CFG_ACCENT : CFG_BORDER, 1);
-            uint32_t tw = fb_text_width(mnames[m]);
-            fb_draw_string((uint32_t)(bx + (MODE_W - (int32_t)tw) / 2), (uint32_t)(by + 6),
-                          mnames[m], sel ? CFG_ACCENT : CFG_TEXT, 0, true);
-        }
+        char buf[64];
+        stack->add(make_info_row(tr(STR_CONFIG_CPU), sysinfo_cpu_name()));
 
-        int sy15 = cy + lang_section_y() - 8;
-        fb_fill_rect((uint32_t)(cx + 8), (uint32_t)sy15, (uint32_t)(cw - 16), 1, CFG_BORDER);
-
-        fb_draw_string((uint32_t)(cx + LIST_X), (uint32_t)(cy + lang_section_y()),
-                       tr(STR_CONFIG_LANGUAGE), CFG_DIM, 0, true);
-
-        const char* lnames[] = { tr(STR_CONFIG_LANG_PT), tr(STR_CONFIG_LANG_EN) };
-        Lang cur_lang = lang_get();
-        for (int l = 0; l < 2; l++) {
-            int bx  = cx + LIST_X + l * (LANG_W + 8);
-            int by  = cy + lang_section_y() + 18;
-            bool sel = ((int)cur_lang == l);
-            fb_fill_rect((uint32_t)bx, (uint32_t)by, (uint32_t)LANG_W, (uint32_t)LANG_H,
-                        sel ? CFG_SEL : CFG_BG);
-            fb_draw_rect((uint32_t)bx, (uint32_t)by, (uint32_t)LANG_W, (uint32_t)LANG_H,
-                        sel ? CFG_ACCENT : CFG_BORDER, 1);
-            uint32_t tw = fb_text_width(lnames[l]);
-            fb_draw_string((uint32_t)(bx + (LANG_W - (int32_t)tw) / 2), (uint32_t)(by + 6),
-                          lnames[l], sel ? CFG_ACCENT : CFG_TEXT, 0, true);
-        }
-
-        int sy2 = cy + hw_section_y() - 8;
-        fb_fill_rect((uint32_t)(cx + 8), (uint32_t)sy2, (uint32_t)(cw - 16), 1, CFG_BORDER);
-
-        fb_draw_string((uint32_t)(cx + LIST_X), (uint32_t)(cy + hw_section_y()),
-                       tr(STR_CONFIG_DEVICE), CFG_ACCENT, 0, true);
-
-        int hw_y = hw_section_y() + 18;
-
-        draw_info_row(cx, cy, hw_y,      tr(STR_CONFIG_CPU), sysinfo_cpu_name());
-        draw_info_row(cx, cy, hw_y + 18, tr(STR_CONFIG_CORES), "");
-
-        char cores_buf[8];
-        uint32_t cores = sysinfo_cpu_cores();
-        kuitoa((uint64_t)cores, cores_buf);
-        fb_draw_string((uint32_t)(cx + LIST_X + 120), (uint32_t)(cy + hw_y + 18),
-                       cores_buf, CFG_TEXT, 0, true);
+        kuitoa((uint64_t)sysinfo_cpu_cores(), buf);
+        stack->add(make_info_row(tr(STR_CONFIG_CORES), buf));
 
         char ram_buf[24];
         sysinfo_format_ram(sysinfo_total_ram(), ram_buf);
-        draw_info_row(cx, cy, hw_y + 36, tr(STR_CONFIG_RAM_TOTAL), ram_buf);
+        stack->add(make_info_row(tr(STR_CONFIG_RAM_TOTAL), ram_buf));
 
         sysinfo_format_ram(sysinfo_free_ram(), ram_buf);
-        draw_info_row(cx, cy, hw_y + 54, tr(STR_CONFIG_RAM_FREE), ram_buf);
+        stack->add(make_info_row(tr(STR_CONFIG_RAM_FREE), ram_buf));
 
         sysinfo_format_ram(mem_get_heap_used(), ram_buf);
-        draw_info_row(cx, cy, hw_y + 72, tr(STR_CONFIG_HEAP), ram_buf);
+        stack->add(make_info_row(tr(STR_CONFIG_HEAP), ram_buf));
 
-        fb_draw_string((uint32_t)(cx + LIST_X),
-                       (uint32_t)(cy + CFG_H - Window::TITLE_BAR_H - 20),
-                       tr(STR_CONFIG_FOOTER_HINT),
-                       CFG_DIM, 0, true);
+        add(stack);
     }
 
-    EventResult on_event(const WidgetEvent& ev) override {
-        if (ev.type == EventType::MouseDown) {
-            int32_t lx = ev.x - (int32_t)Window::BORDER;
-            int32_t ly = ev.y - (int32_t)Window::BORDER - (int32_t)Window::TITLE_BAR_H;
-
-            int count = wallpaper_count();
-            bool changed = false;
-
-            if (lx >= LIST_X && lx < LIST_X + LIST_W &&
-                ly >= LIST_Y && ly < LIST_Y + (ITEM_H - 2)) {
-                wallpaper_set(-1);
-                changed = true;
-            }
-            for (int i = 0; !changed && i < count; i++) {
-                int iy = LIST_Y + (i + 1) * ITEM_H;
-                if (lx >= LIST_X && lx < LIST_X + LIST_W &&
-                    ly >= iy && ly < iy + (ITEM_H - 2)) {
-                    wallpaper_set(i);
-                    changed = true;
-                }
-            }
-            for (int m = 0; !changed && m < 3; m++) {
-                int bx = LIST_X + m * (MODE_W + 8);
-                int by = mode_section_y() + 18;
-                if (lx >= bx && lx < bx + MODE_W && ly >= by && ly < by + MODE_H) {
-                    wallpaper_set_mode((WallpaperMode)m);
-                    changed = true;
-                }
-            }
-            for (int l = 0; !changed && l < 2; l++) {
-                int bx = LIST_X + l * (LANG_W + 8);
-                int by = lang_section_y() + 18;
-                if (lx >= bx && lx < bx + LANG_W && ly >= by && ly < by + LANG_H) {
-                    lang_set((Lang)l);
-                    changed = true;
-                }
-            }
-            if (changed) {
-                kstrncpy(title, tr(STR_CONFIG_WINDOW_TITLE), sizeof(title) - 1);
-            }
-            return EventResult::Handled;
-        }
-
-        if (ev.type == EventType::KeyDown) {
-            uint8_t c = ev.key;
-            int count = wallpaper_count();
-            int cur   = wallpaper_get();
-
-            if (c == 27) { wm_close(this); return EventResult::Handled; }
-            if ((c == 'k' || c == 'K') && cur > -1)      wallpaper_set(cur - 1);
-            if ((c == 'j' || c == 'J') && cur < count-1) wallpaper_set(cur + 1);
-            if (c == '1') wallpaper_set_mode(WALLPAPER_MODE_FILL);
-            if (c == '2') wallpaper_set_mode(WALLPAPER_MODE_CENTER);
-            if (c == '3') wallpaper_set_mode(WALLPAPER_MODE_TILE);
-            if (c == 'l' || c == 'L') lang_toggle();
-            kstrncpy(title, tr(STR_CONFIG_WINDOW_TITLE), sizeof(title) - 1);
-            return EventResult::Handled;
-        }
-
-        return EventResult::Ignored;
+private:
+    // "chave: valor" numa linha só, como uma HStack de dois Labels —
+    // reaproveita o layout automático em vez de calcular posição X
+    // manualmente como a versão anterior fazia (draw_info_row com
+    // offset fixo de 120px).
+    HStack* make_info_row(const char* key, const char* value) {
+        HStack* row = new HStack(0, 0, 18, 8);
+        row->add(new Label(0, 0, key));
+        row->add(new Label(0, 0, value));
+        return row;
     }
+};
+
+class ConfigWindow : public Window {
+public:
+    ConfigWindow(int32_t x, int32_t y, const char* title_)
+        : Window(x, y, CFG_W, CFG_H, title_, WinType::Dialog)
+    {
+        min_width  = 420;
+        min_height = 320;
+
+        int32_t content_offset_x = (int32_t)Window::BORDER;
+        int32_t content_offset_y = (int32_t)Window::BORDER + (int32_t)Window::TITLE_BAR_H + 1;
+
+        m_nav = new SidebarNav(content_offset_x, content_offset_y,
+                               SIDEBAR_W, CFG_H - (uint32_t)content_offset_y - Window::BORDER);
+        m_nav->add_item(tr(STR_CONFIG_CATEGORY_SYSTEM));
+        m_nav->add_item(tr(STR_CONFIG_CATEGORY_PERSONALIZATION));
+        m_nav->add_item(tr(STR_CONFIG_CATEGORY_ABOUT));
+        m_nav->set_on_select(&ConfigWindow::on_nav_select, this);
+        add(m_nav);
+
+        uint32_t panel_w = CFG_W - (uint32_t)Window::BORDER * 2 - SIDEBAR_W;
+        uint32_t panel_h = CFG_H - (uint32_t)content_offset_y - Window::BORDER;
+        int32_t  panel_x = content_offset_x + (int32_t)SIDEBAR_W;
+
+        m_system = new SystemPanel(panel_x, content_offset_y, panel_w, panel_h);
+        m_pers   = new PersonalizationPanel(panel_x, content_offset_y, panel_w, panel_h);
+        m_about  = new AboutSystemPanel(panel_x, content_offset_y, panel_w, panel_h);
+
+        add(m_system);
+        add(m_pers);
+        add(m_about);
+
+        show_category(CAT_SYSTEM);
+    }
+
+    void on_resized() override {
+
+        Rect content = content_area_absolute();
+        uint32_t panel_w = content.w - SIDEBAR_W;
+        uint32_t panel_h = content.h;
+
+        m_nav->bounds.h = panel_h;
+        m_system->bounds.w = panel_w; m_system->bounds.h = panel_h;
+        m_pers->bounds.w   = panel_w; m_pers->bounds.h   = panel_h;
+        m_about->bounds.w  = panel_w; m_about->bounds.h  = panel_h;
+        Window::on_resized();
+    }
+
+    void show_category(int index) {
+        m_system->visible = (index == CAT_SYSTEM);
+        m_pers->visible   = (index == CAT_PERSONALIZATION);
+        m_about->visible  = (index == CAT_ABOUT);
+    }
+
+    static void on_nav_select(int index, void* user_data) {
+        ConfigWindow* self = static_cast<ConfigWindow*>(user_data);
+        self->show_category(index);
+    }
+
+private:
+    SidebarNav*           m_nav;
+    SystemPanel*           m_system;
+    PersonalizationPanel*  m_pers;
+    AboutSystemPanel*      m_about;
 };
 
 static ConfigWindow* cfg_win = nullptr;
