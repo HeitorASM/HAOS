@@ -80,7 +80,8 @@ static void mouse_process_byte(uint8_t b) {
 
             int8_t wheel = (int8_t)(pkt[3] & 0x0F);
             if (wheel & 0x08) wheel -= 0x10;
-            scroll_now += wheel;
+            // Normaliza o sentido: positivo significa rolar para cima.
+            scroll_now -= wheel;
 
             mx += (int32_t)dx;
             my -= (int32_t)dy;  // eixo Y invertido
