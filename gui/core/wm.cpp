@@ -313,19 +313,33 @@ void wm_mouse_move(int32_t mx, int32_t my) {
 
         if (edge & Window::RESIZE_RIGHT) {
             int32_t new_w = mx - r.x;
-            if ((uint32_t)new_w >= win->min_width) r.w = (uint32_t)new_w;
+            r.w = new_w < (int32_t)win->min_width
+                ? win->min_width : (uint32_t)new_w;
         }
         if (edge & Window::RESIZE_BOTTOM) {
             int32_t new_h = my - r.y;
-            if ((uint32_t)new_h >= win->min_height) r.h = (uint32_t)new_h;
+            r.h = new_h < (int32_t)win->min_height
+                ? win->min_height : (uint32_t)new_h;
         }
         if (edge & Window::RESIZE_LEFT) {
             int32_t new_w = (r.x + (int32_t)r.w) - mx;
-            if ((uint32_t)new_w >= win->min_width) { r.x = mx; r.w = (uint32_t)new_w; }
+            if (new_w < (int32_t)win->min_width) {
+                r.x = r.x + (int32_t)r.w - (int32_t)win->min_width;
+                r.w = win->min_width;
+            } else {
+                r.x = mx;
+                r.w = (uint32_t)new_w;
+            }
         }
         if (edge & Window::RESIZE_TOP) {
             int32_t new_h = (r.y + (int32_t)r.h) - my;
-            if ((uint32_t)new_h >= win->min_height) { r.y = my; r.h = (uint32_t)new_h; }
+            if (new_h < (int32_t)win->min_height) {
+                r.y = r.y + (int32_t)r.h - (int32_t)win->min_height;
+                r.h = win->min_height;
+            } else {
+                r.y = my;
+                r.h = (uint32_t)new_h;
+            }
         }
 
         win->bounds = r;

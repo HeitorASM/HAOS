@@ -3,6 +3,61 @@
 #include "../../drivers/fb.h"
 #include "../../drivers/font.h"
 
+namespace {
+
+void draw_window_title(uint32_t x, uint32_t y, uint32_t max_width,
+                       const char* title, uint32_t color) {
+    char visible[sizeof(Window::title)];
+    visible[0] = '\0';
+
+    uint32_t length = 0;
+    const char* p = title;
+    while (*p && length + 1 < sizeof(visible)) {
+        const char* next = p + 1;
+        if ((*p & 0xE0) == 0xC0 && p[1]) next = p + 2;
+        else if ((*p & 0xF0) == 0xE0 && p[1] && p[2]) next = p + 3;
+        else if ((*p & 0xF8) == 0xF0 && p[1] && p[2] && p[3]) next = p + 4;
+
+        uint32_t bytes = (uint32_t)(next - p);
+        if (length + bytes >= sizeof(visible)) break;
+        for (uint32_t i = 0; i < bytes; i++) visible[length++] = p[i];
+        visible[length] = '\0';
+        p = next;
+    }
+
+    if (fb_text_width(visible) > max_width) {
+        static const char suffix[] = "...";
+        uint32_t suffix_width = fb_text_width(suffix);
+        length = 0;
+        p = title;
+        if (max_width > suffix_width) {
+            while (*p) {
+                const char* next = p + 1;
+                if ((*p & 0xE0) == 0xC0 && p[1]) next = p + 2;
+                else if ((*p & 0xF0) == 0xE0 && p[1] && p[2]) next = p + 3;
+                else if ((*p & 0xF8) == 0xF0 && p[1] && p[2] && p[3]) next = p + 4;
+
+                uint32_t bytes = (uint32_t)(next - p);
+                if (length + bytes + suffix_width >= sizeof(visible)) break;
+                for (uint32_t i = 0; i < bytes; i++) visible[length++] = p[i];
+                visible[length] = '\0';
+                if (fb_text_width(visible) + suffix_width > max_width) {
+                    length -= bytes;
+                    visible[length] = '\0';
+                    break;
+                }
+                p = next;
+            }
+            for (uint32_t i = 0; suffix[i]; i++) visible[length++] = suffix[i];
+            visible[length] = '\0';
+        }
+    }
+
+    fb_draw_string(x, y, visible, color, 0, true);
+}
+
+} // namespace
+
 Window::Window(int32_t x, int32_t y, uint32_t w, uint32_t h,
               const char* title_, WinType type_)
     : Container(x, y, w, h),
@@ -85,7 +140,9 @@ void Window::draw(int32_t ox, int32_t oy) {
     uint32_t title_col = focused ? COLOR_TEXT_LIGHT : COLOR_TEXT_GRAY;
     uint32_t tx = x + BORDER + BTN_SIZE * 3 + BTN_GAP * 3 + 8;
     uint32_t ty = y + BORDER + (TITLE_BAR_H - FONT_H) / 2;
-    fb_draw_string(tx, ty, title, title_col, 0, true);
+    uint32_t close_x = x + w - BORDER - BTN_SIZE - BTN_GAP;
+    uint32_t title_width = close_x > tx + BTN_GAP ? close_x - tx - BTN_GAP : 0;
+    draw_window_title(tx, ty, title_width, title, title_col);
 
     // --- Botões de controle (círculos com ícone) ---
     int32_t by2 = (int32_t)(y + BORDER) + (int32_t)(TITLE_BAR_H - BTN_SIZE) / 2;
