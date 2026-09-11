@@ -46,11 +46,11 @@ EventResult Container::on_event(const WidgetEvent& ev) {
                 w->bounds.contains(ev.x - ax, ev.y - ay)) {
                 if (m_focused_child != w) {
                     if (m_focused_child) {
-                        WidgetEvent blur{EventType::Blur, 0, 0, 0};
+                        WidgetEvent blur{EventType::Blur, 0, 0, 0, 0};
                         m_focused_child->on_event(blur);
                     }
                     m_focused_child = w;
-                    WidgetEvent focus{EventType::Focus, 0, 0, 0};
+                    WidgetEvent focus{EventType::Focus, 0, 0, 0, 0};
                     w->on_event(focus);
                 }
                 break;
@@ -103,11 +103,11 @@ bool Container::focus_next() {
 
     if (next_candidate && next_candidate != m_focused_child) {
         if (m_focused_child) {
-            WidgetEvent blur{EventType::Blur, 0, 0, 0};
+            WidgetEvent blur{EventType::Blur, 0, 0, 0, 0};
             m_focused_child->on_event(blur);
         }
         m_focused_child = next_candidate;
-        WidgetEvent focus{EventType::Focus, 0, 0, 0};
+        WidgetEvent focus{EventType::Focus, 0, 0, 0, 0};
         next_candidate->on_event(focus);
         return true;
     }

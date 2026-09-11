@@ -31,6 +31,7 @@ enum class EventType : uint8_t {
     MouseDown,   // botão pressionado dentro do widget
     MouseUp,     // botão solto (widget pode não estar mais sob o cursor)
     MouseMove,   // cursor se movendo (com ou sem botão pressionado)
+        MouseScroll,  // roda do mouse; scroll positivo = para cima
     MouseDrag,   // movendo COM botão pressionado — equivalente ao
                  // on_drag antigo, usado p.ex. para seleção de texto
     KeyDown,     // tecla pressionada, widget precisa estar focado
@@ -47,7 +48,8 @@ struct WidgetEvent {
     // eventos de mouse — cada widget recebe (0,0) no seu canto
     // superior esquerdo, independente de onde está na tela.
     int32_t   x, y;
-    uint8_t   key;       // válido apenas em KeyDown
+        uint8_t   key;       // válido apenas em KeyDown
+        int32_t   scroll;    // válido apenas em MouseScroll
 };
 
 // Resultado do despacho: diz ao chamador (Container/WM) se o evento

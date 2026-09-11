@@ -200,5 +200,9 @@ EventResult ScrollBar::on_event(const WidgetEvent& ev) {
         m_dragging = false;
         return EventResult::Handled;
     }
+    if (ev.type == EventType::MouseScroll && ev.scroll != 0) {
+        set_value(m_value - ev.scroll);
+        return EventResult::Handled;
+    }
     return EventResult::Ignored;
 }

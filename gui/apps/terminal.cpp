@@ -515,7 +515,8 @@ public:
         int track_y = content.y + PAD;
         int track_h = output_rows * FONT_H;
 
-        if (ev.type == EventType::MouseDown || ev.type == EventType::MouseDrag) {
+        if (ev.type == EventType::MouseDown || ev.type == EventType::MouseDrag ||
+            ev.type == EventType::MouseScroll) {
             int x = bounds.x + ev.x;
             int y = bounds.y + ev.y;
             bool on_bar = x >= track_x && x < track_x + (int)ScrollBar::DEFAULT_WIDTH &&
@@ -531,6 +532,12 @@ public:
                     return result;
                 }
                 if (on_bar) return EventResult::Handled;
+            }
+            if (ev.type == EventType::MouseScroll) {
+                m_scrollbar.set_value(m_scrollbar.value() - ev.scroll);
+                int max_offset = t->num_lines > output_rows ? t->num_lines - output_rows : 0;
+                t->scroll_offset = max_offset - m_scrollbar.value();
+                return EventResult::Handled;
             }
         }
         if (ev.type == EventType::MouseUp) {

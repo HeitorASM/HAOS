@@ -621,7 +621,8 @@ public:
         int track_x = lo.bx + lo.bw + 2;
         int track_y = lo.by;
         int track_h = lo.text_h;
-        if (ev.type == EventType::MouseDown || ev.type == EventType::MouseDrag) {
+        if (ev.type == EventType::MouseDown || ev.type == EventType::MouseDrag ||
+            ev.type == EventType::MouseScroll) {
             int x = bounds.x + ev.x;
             int y = bounds.y + ev.y;
             bool on_bar = x >= track_x && x < track_x + (int)ScrollBar::DEFAULT_WIDTH &&
@@ -636,6 +637,12 @@ public:
                     e->manual_scroll = true;
                     return result;
                 }
+            }
+            if (ev.type == EventType::MouseScroll) {
+                m_scrollbar.set_value(m_scrollbar.value() - ev.scroll);
+                e->scroll_row = m_scrollbar.value();
+                e->manual_scroll = true;
+                return EventResult::Handled;
             }
             if (on_bar) {
                 return EventResult::Handled;

@@ -269,7 +269,7 @@ bool wm_mouse_down(int32_t mx, int32_t my) {
             }
             if (!win->minimized && in_content(win, mx, my)) {
                 s_content_mouse_down[s_focused_idx] = true;
-                WidgetEvent ev{EventType::MouseDown, mx, my, 0};
+                WidgetEvent ev{EventType::MouseDown, mx, my, 0, 0};
                 // Window::on_event() converte estas coordenadas
                 // absolutas de tela para relativas à própria janela
                 // antes de despachar à árvore de widgets (ver
@@ -347,12 +347,19 @@ void wm_mouse_move(int32_t mx, int32_t my) {
     }
 
     if (s_focused_idx >= 0 && s_content_mouse_down[s_focused_idx]) {
-        WidgetEvent ev{EventType::MouseDrag, mx, my, 0};
+        WidgetEvent ev{EventType::MouseDrag, mx, my, 0, 0};
         win->on_event(ev);
     } else {
-        WidgetEvent ev{EventType::MouseMove, mx, my, 0};
+        WidgetEvent ev{EventType::MouseMove, mx, my, 0, 0};
         win->on_event(ev);
     }
+}
+
+void wm_mouse_scroll(int32_t mx, int32_t my, int32_t amount) {
+    Window* win = wm_get_focused();
+    if (!win || amount == 0 || !in_content(win, mx, my)) return;
+    WidgetEvent ev{EventType::MouseScroll, mx, my, 0, amount};
+    win->on_event(ev);
 }
 
 void wm_mouse_up(int32_t mx, int32_t my) {
@@ -368,7 +375,7 @@ void wm_mouse_up(int32_t mx, int32_t my) {
             // mas a ação nunca disparava. Agora usa a posição atual
             // real do cursor, igual MouseDown/MouseMove/MouseDrag já
             // faziam.
-            WidgetEvent ev{EventType::MouseUp, mx, my, 0};
+            WidgetEvent ev{EventType::MouseUp, mx, my, 0, 0};
             win->on_event(ev);
         }
         if (win) {
@@ -429,6 +436,6 @@ CursorType wm_get_cursor_hint(int32_t mx, int32_t my) {
 void wm_dispatch_key(uint8_t c) {
     Window* w = wm_get_focused();
     if (!w) return;
-    WidgetEvent ev{EventType::KeyDown, 0, 0, c};
+    WidgetEvent ev{EventType::KeyDown, 0, 0, c, 0};
     w->on_event(ev);
 }

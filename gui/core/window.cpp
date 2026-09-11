@@ -21,7 +21,7 @@ void Window::on_resized() {
     // desenham manualmente (Terminal, Editor) sobrescrevem isto se
     // precisarem recalcular algo além do que draw() já resolve via
     // content_area_absolute() sendo recalculado a cada frame.
-    WidgetEvent ev{EventType::Resize, 0, 0, 0};
+    WidgetEvent ev{EventType::Resize, 0, 0, 0, 0};
     m_children.dispatch(ev, 0, 0);
 }
 
@@ -29,7 +29,8 @@ EventResult Window::on_event(const WidgetEvent& ev) {
     bool is_mouse = ev.type == EventType::MouseDown ||
                     ev.type == EventType::MouseUp   ||
                     ev.type == EventType::MouseMove ||
-                    ev.type == EventType::MouseDrag;
+                    ev.type == EventType::MouseDrag ||
+                    ev.type == EventType::MouseScroll;
 
     if (!is_mouse) {
         // KeyDown/Focus/Blur/Resize não carregam coordenadas de

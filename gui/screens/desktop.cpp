@@ -97,6 +97,9 @@ extern "C" void run_desktop(void) {
 
         int32_t mx = mouse_get_x(), my = mouse_get_y();
         bool pressed = mouse_left_pressed();
+        int32_t scroll = mouse_get_scroll();
+
+        if (scroll != 0) wm_mouse_scroll(mx, my, scroll);
 
         if (pressed && !was_pressed) {
             uint32_t ty = sh - TASKBAR_H;

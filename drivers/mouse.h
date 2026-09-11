@@ -21,6 +21,7 @@ void    mouse_set_bounds(int32_t max_x, int32_t max_y);
 // Posição atual do cursor
 int32_t mouse_get_x(void);
 int32_t mouse_get_y(void);
+int32_t mouse_get_scroll(void);
 
 // Estado de botões (após mouse_snap)
 bool    mouse_left_pressed(void);   // botão esquerdo está pressionado

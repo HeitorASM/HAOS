@@ -58,6 +58,7 @@ void    wm_dispatch_key(uint8_t c);
 // "vazou" para ícones/taskbar por baixo).
 bool    wm_mouse_down(int32_t mx, int32_t my);
 void    wm_mouse_move(int32_t mx, int32_t my);
+void    wm_mouse_scroll(int32_t mx, int32_t my, int32_t amount);
 void    wm_mouse_up(int32_t mx, int32_t my);
 
 // Decide qual ícone de cursor mostrar para a posição atual do mouse

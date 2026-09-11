@@ -56,7 +56,8 @@ EventResult WidgetList::dispatch(const WidgetEvent& ev, int32_t ox, int32_t oy) 
             bool is_mouse = ev.type == EventType::MouseDown ||
                             ev.type == EventType::MouseUp   ||
                             ev.type == EventType::MouseMove ||
-                            ev.type == EventType::MouseDrag;
+                                     ev.type == EventType::MouseDrag ||
+                                     ev.type == EventType::MouseScroll;
 
             if (!is_mouse || w->bounds.contains(ev.x - ox, ev.y - oy)) {
                 WidgetEvent local = ev;

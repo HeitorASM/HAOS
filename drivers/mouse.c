@@ -36,9 +36,11 @@ static uint8_t mouse_recv(void) {
 static int32_t mx = 512, my = 384;
 static int32_t bounds_x = 1023, bounds_y = 767;
 
-// Packet parser (3 bytes por evento padrão)
-static uint8_t  pkt[3];
+// Packet parser (4 bytes quando a roda está habilitada)
+static uint8_t  pkt[4];
 static int      pkt_phase = 0;
+static int32_t  scroll_now = 0;
+static int32_t  scroll_snap = 0;
 
 // Botões: dois snapshots para detecção de click
 static uint8_t  btn_now  = 0;   // atualizado a cada pacote
@@ -61,6 +63,10 @@ static void mouse_process_byte(uint8_t b) {
             break;
         case 2:
             pkt[2] = b;
+            pkt_phase = 3;
+            break;
+        case 3:
+            pkt[3] = b;
             pkt_phase = 0;
 
             // Extrai botões
@@ -71,6 +77,10 @@ static void mouse_process_byte(uint8_t b) {
             int16_t dy = (int16_t)pkt[2];
             if (pkt[0] & 0x10) dx |= (int16_t)0xFF00;
             if (pkt[0] & 0x20) dy |= (int16_t)0xFF00;
+
+            int8_t wheel = (int8_t)(pkt[3] & 0x0F);
+            if (wheel & 0x08) wheel -= 0x10;
+            scroll_now += wheel;
 
             mx += (int32_t)dx;
             my -= (int32_t)dy;  // eixo Y invertido
@@ -105,10 +115,19 @@ void mouse_init(void) {
 
     // Restaura padrões e habilita data reporting
     mouse_send(0xF6);  mouse_recv();  // set defaults
+
+    // Habilita o modo IntelliMouse, que acrescenta o quarto byte da roda.
+    mouse_send(0xF3); mouse_recv(); mouse_send(200); mouse_recv();
+    mouse_send(0xF3); mouse_recv(); mouse_send(100); mouse_recv();
+    mouse_send(0xF3); mouse_recv(); mouse_send(80);  mouse_recv();
+    mouse_send(0xF2); mouse_recv();
+
     mouse_send(0xF4);  mouse_recv();  // enable reporting
 
     pkt_phase = 0;
     mx = 512; my = 384;
+    scroll_now = 0;
+    scroll_snap = 0;
 }
 
 // ---- Processamento do ring-buffer (polling) ---------------------
@@ -142,6 +161,8 @@ void mouse_process(void) {
 void mouse_snap(void) {
     btn_prev = btn_snap;
     btn_snap = btn_now;
+    scroll_snap = scroll_now;
+    scroll_now = 0;
 }
 
 void mouse_set_bounds(int32_t bx, int32_t by) {
@@ -153,6 +174,7 @@ void mouse_set_bounds(int32_t bx, int32_t by) {
 
 int32_t mouse_get_x(void) { return mx; }
 int32_t mouse_get_y(void) { return my; }
+int32_t mouse_get_scroll(void) { return scroll_snap; }
 
 bool mouse_left_pressed(void)  { return (btn_snap & 1) != 0; }
 bool mouse_left_clicked(void)  { return (btn_snap & 1) && !(btn_prev & 1); }
