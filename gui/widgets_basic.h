@@ -85,3 +85,33 @@ private:
 
     static constexpr uint32_t BOX_SIZE = 14;
 };
+
+// Barra vertical reutilizavel para conteudo maior que a area visivel.
+class ScrollBar : public Widget {
+public:
+    static constexpr uint32_t DEFAULT_WIDTH = 10;
+    typedef void (*ChangeCallback)(ScrollBar* self, int value);
+
+    ScrollBar(int32_t x, int32_t y, uint32_t w, uint32_t h);
+
+    void draw(int32_t ox, int32_t oy) override;
+    EventResult on_event(const WidgetEvent& ev) override;
+
+    void set_range(int content_size, int viewport_size);
+    void set_value(int value);
+    int value() const { return m_value; }
+    int max_value() const { return m_max_value; }
+    void set_on_change(ChangeCallback cb) { m_on_change = cb; }
+
+private:
+    int m_content_size;
+    int m_viewport_size;
+    int m_value;
+    int m_max_value;
+    bool m_dragging;
+    ChangeCallback m_on_change;
+
+    int thumb_size() const;
+    int thumb_offset() const;
+    void update_from_y(int y);
+};

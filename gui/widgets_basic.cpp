@@ -123,3 +123,82 @@ EventResult Checkbox::on_event(const WidgetEvent& ev) {
     }
     return EventResult::Ignored;
 }
+
+// ScrollBar
+
+ScrollBar::ScrollBar(int32_t x, int32_t y, uint32_t w, uint32_t h)
+    : Widget(x, y, w, h),
+      m_content_size(0), m_viewport_size(0), m_value(0), m_max_value(0),
+      m_dragging(false), m_on_change(nullptr) {}
+
+void ScrollBar::set_range(int content_size, int viewport_size) {
+    m_content_size = content_size > 0 ? content_size : 0;
+    m_viewport_size = viewport_size > 0 ? viewport_size : 0;
+    m_max_value = m_content_size > m_viewport_size
+                    ? m_content_size - m_viewport_size : 0;
+    set_value(m_value);
+}
+
+void ScrollBar::set_value(int value) {
+    if (value < 0) value = 0;
+    if (value > m_max_value) value = m_max_value;
+    if (value == m_value) return;
+    m_value = value;
+    if (m_on_change) m_on_change(this, m_value);
+}
+
+int ScrollBar::thumb_size() const {
+    if (bounds.h == 0 || m_content_size <= 0) return 0;
+    int size = (int)bounds.h * m_viewport_size / m_content_size;
+    if (size < 16) size = 16;
+    if (size > (int)bounds.h) size = (int)bounds.h;
+    return size;
+}
+
+int ScrollBar::thumb_offset() const {
+    int usable = (int)bounds.h - thumb_size();
+    if (usable <= 0 || m_max_value <= 0) return 0;
+    return usable * m_value / m_max_value;
+}
+
+void ScrollBar::draw(int32_t ox, int32_t oy) {
+    int32_t ax = ox + bounds.x;
+    int32_t ay = oy + bounds.y;
+    fb_fill_rect((uint32_t)ax, (uint32_t)ay, bounds.w, bounds.h, 0x101C34);
+    if (m_max_value <= 0) return;
+
+    int thumb = thumb_size();
+    fb_fill_rect((uint32_t)ax, (uint32_t)(ay + thumb_offset()), bounds.w,
+                 (uint32_t)thumb, 0x3A66A8);
+}
+
+void ScrollBar::update_from_y(int y) {
+    int thumb = thumb_size();
+    int usable = (int)bounds.h - thumb;
+    if (usable <= 0 || m_max_value <= 0) return;
+
+    int offset = y - thumb / 2;
+    if (offset < 0) offset = 0;
+    if (offset > usable) offset = usable;
+    set_value(offset * m_max_value / usable);
+}
+
+EventResult ScrollBar::on_event(const WidgetEvent& ev) {
+    if (ev.type == EventType::MouseDown) {
+        if (ev.x < 0 || ev.x >= (int32_t)bounds.w ||
+            ev.y < 0 || ev.y >= (int32_t)bounds.h)
+            return EventResult::Ignored;
+        m_dragging = true;
+        update_from_y(ev.y);
+        return EventResult::Handled;
+    }
+    if (ev.type == EventType::MouseDrag && m_dragging) {
+        update_from_y(ev.y);
+        return EventResult::Handled;
+    }
+    if (ev.type == EventType::MouseUp) {
+        m_dragging = false;
+        return EventResult::Handled;
+    }
+    return EventResult::Ignored;
+}

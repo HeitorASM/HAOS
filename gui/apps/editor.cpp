@@ -7,9 +7,9 @@
 #include "../../kernel/keyboard.h"
 #include "../../fs/vfs.h"
 #include "../../kernel/lang.h"
+#include "../widgets_basic.h"
 
 #define PAD 8
-#define SCROLLBAR_W 10
 
 #define CLIPBOARD_MAX ((EDITOR_COLS + 1) * EDITOR_MAX_LINES)
 #define SAVEAS_MAX (VFS_NAME_MAX - 1)
@@ -21,7 +21,6 @@ struct EditorState {
     int  cursor_row, cursor_col;
     int  scroll_row;
     bool manual_scroll;
-    bool scroll_dragging;
 
     char filename[VFS_NAME_MAX];
     VfsNode* file;
@@ -367,10 +366,12 @@ struct EditorLayout {
 class EditorWindow : public Window {
 public:
     EditorState m_state;
+    ScrollBar m_scrollbar;
     bool m_title_shows_dirty = false; // rastreia o "*" já refletido no título
 
     EditorWindow(int32_t x, int32_t y, uint32_t w, uint32_t h, const char* title)
-        : Window(x, y, w, h, title, WinType::Terminal)
+                : Window(x, y, w, h, title, WinType::Terminal),
+                      m_scrollbar(0, 0, ScrollBar::DEFAULT_WIDTH, 1)
     {
         kmemset(&m_state, 0, sizeof(EditorState));
         EditorState* e = &m_state;
@@ -414,7 +415,7 @@ public:
         Rect content = content_area_absolute();
         lo.bx = content.x + PAD;
         lo.by = content.y + PAD;
-        lo.bw = (int)content.w - PAD * 2 - SCROLLBAR_W;
+        lo.bw = (int)content.w - PAD * 2 - (int)ScrollBar::DEFAULT_WIDTH;
         lo.bh = (int)content.h - PAD * 2;
 
         int status_h = FONT_H + 6;
@@ -462,6 +463,11 @@ public:
         int max_scroll = e->num_lines > visible_rows ? e->num_lines - visible_rows : 0;
         if (e->scroll_row > max_scroll) e->scroll_row = max_scroll;
 
+        int track_x = bx + bw + 2;
+        m_scrollbar.bounds = Rect{track_x, by, ScrollBar::DEFAULT_WIDTH, (uint32_t)text_h};
+        m_scrollbar.set_range(e->num_lines, visible_rows);
+        m_scrollbar.set_value(e->scroll_row);
+
         fb_fill_rect((uint32_t)bx, (uint32_t)by, (uint32_t)bw, (uint32_t)text_h, COLOR_TERM_BG);
 
         bool has_sel = editor_sel_nonempty(e);
@@ -499,16 +505,7 @@ public:
             }
         }
 
-        int track_x = bx + bw + 2;
-        fb_fill_rect((uint32_t)track_x, (uint32_t)by, SCROLLBAR_W,
-                     (uint32_t)text_h, 0x101C34);
-        if (max_scroll > 0) {
-            int thumb_h = text_h * visible_rows / e->num_lines;
-            if (thumb_h < FONT_H) thumb_h = FONT_H;
-            int thumb_y = by + (text_h - thumb_h) * e->scroll_row / max_scroll;
-            fb_fill_rect((uint32_t)track_x, (uint32_t)thumb_y, SCROLLBAR_W,
-                         (uint32_t)thumb_h, 0x3A66A8);
-        }
+        m_scrollbar.draw(0, 0);
 
         int status_h = FONT_H + 6;
         int sy = by + text_h + 3;
@@ -627,28 +624,28 @@ public:
         if (ev.type == EventType::MouseDown || ev.type == EventType::MouseDrag) {
             int x = bounds.x + ev.x;
             int y = bounds.y + ev.y;
-            bool on_bar = x >= track_x && x < track_x + SCROLLBAR_W &&
+            bool on_bar = x >= track_x && x < track_x + (int)ScrollBar::DEFAULT_WIDTH &&
                           y >= track_y && y < track_y + track_h;
-            if (ev.type == EventType::MouseDown && on_bar)
-                e->scroll_dragging = true;
-            if (e->scroll_dragging) {
-                int max_scroll = e->num_lines > lo.visible_rows ?
-                                 e->num_lines - lo.visible_rows : 0;
-                if (max_scroll > 0) {
-                    int thumb_h = track_h * lo.visible_rows / e->num_lines;
-                    if (thumb_h < FONT_H) thumb_h = FONT_H;
-                    int usable = track_h - thumb_h;
-                    int pos = y - track_y - thumb_h / 2;
-                    if (pos < 0) pos = 0;
-                    if (pos > usable) pos = usable;
-                    e->scroll_row = pos * max_scroll / usable;
+            if (on_bar || ev.type == EventType::MouseDrag) {
+                WidgetEvent bar_ev = ev;
+                bar_ev.x = x - track_x;
+                bar_ev.y = y - track_y;
+                EventResult result = m_scrollbar.on_event(bar_ev);
+                if (result == EventResult::Handled) {
+                    e->scroll_row = m_scrollbar.value();
                     e->manual_scroll = true;
+                    return result;
                 }
+            }
+            if (on_bar) {
                 return EventResult::Handled;
             }
         }
         if (ev.type == EventType::MouseUp) {
-            e->scroll_dragging = false;
+            WidgetEvent bar_ev = ev;
+            bar_ev.x = bounds.x + ev.x - track_x;
+            bar_ev.y = bounds.y + ev.y - track_y;
+            m_scrollbar.on_event(bar_ev);
             return EventResult::Handled;
         }
 
@@ -808,7 +805,7 @@ void editor_tick_all(uint64_t ticks) {
 // ---- Criação --------------------------------------------------------
 
 Window* editor_create(int32_t x, int32_t y, const char* path) {
-    uint32_t w = FONT_W * (EDITOR_COLS + 5) + (uint32_t)(Window::BORDER*2 + PAD*2 + SCROLLBAR_W);
+    uint32_t w = FONT_W * (EDITOR_COLS + 5) + (uint32_t)(Window::BORDER*2 + PAD*2 + ScrollBar::DEFAULT_WIDTH);
     uint32_t h = FONT_H * (EDITOR_ROWS + 2) + (uint32_t)(Window::BORDER + Window::TITLE_BAR_H + 1 + PAD*2);
 
     EditorWindow* win = new EditorWindow(x, y, w, h, tr(STR_EDITOR_TITLE));
