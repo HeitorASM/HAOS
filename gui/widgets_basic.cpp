@@ -51,6 +51,14 @@ EventResult Button::on_event(const WidgetEvent& ev) {
             m_hovered = true;
             return EventResult::Handled;
 
+        case EventType::Focus:
+            focused = true;
+            return EventResult::Handled;
+
+        case EventType::Blur:
+            focused = false;
+            return EventResult::Handled;
+
         default:
             return EventResult::Ignored;
     }

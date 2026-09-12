@@ -27,11 +27,15 @@ public:
 
     void draw(int32_t ox, int32_t oy) override;
     EventResult on_event(const WidgetEvent& ev) override;
+    bool is_container() const override { return true; }
 
     // Move o foco de teclado para o próximo widget focável na lista
     // (chamado pelo WM ao receber Tab). Retorna true se algum
     // widget foi focado.
     bool focus_next();
+
+    // Foca o primeiro widget interativo, descendo por containers aninhados.
+    bool focus_first();
 
 protected:
     WidgetList m_children;

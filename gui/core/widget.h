@@ -94,6 +94,15 @@ public:
     // widgets que se ajustam ao conteúdo (Label) recalculam aqui.
     virtual uint32_t preferred_width()  const { return bounds.w; }
     virtual uint32_t preferred_height() const { return bounds.h; }
+
+    // Permite identificar se este Widget é, na verdade, um Container
+    // (tem filhos próprios) sem depender de dynamic_cast/RTTI — o
+    // projeto compila com -fno-rtti. Container sobrescreve isto para
+    // retornar true. Usado por Container::on_event para saber se deve
+    // repassar o clique para dentro de um filho (para resolver foco
+    // recursivamente, ex.: TextField dentro de um VStack) em vez de
+    // focar o container filho diretamente.
+    virtual bool is_container() const { return false; }
 };
 
 //  Nó interno da lista ligada de Widgets (preservado — já

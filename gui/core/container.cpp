@@ -50,8 +50,45 @@ EventResult Container::on_event(const WidgetEvent& ev) {
                         m_focused_child->on_event(blur);
                     }
                     m_focused_child = w;
-                    WidgetEvent focus{EventType::Focus, 0, 0, 0, 0};
-                    w->on_event(focus);
+                    // Se o filho sob o clique é ele mesmo um Container
+                    // (ex.: VStack agrupando Label/TextField/Button),
+                    // NÃO mandamos Focus para ele diretamente — quem
+                    // deve ficar com o foco de teclado é o widget
+                    // folha real lá dentro (TextField, Button...).
+                    // Em vez disso, repassamos o próprio MouseDown
+                    // (já convertido para coordenadas locais deste
+                    // container, que é o espaço em que w->bounds
+                    // vive) para que o container filho resolva seu
+                    // próprio foco interno recursivamente. Sem isso,
+                    // um TextField dentro de um VStack nunca recebia
+                    // Focus, e KeyDown parava no VStack sem repassar
+                    // para dentro — sintoma: "não dá pra digitar".
+                    //
+                    // Usa is_container()/static_cast em vez de
+                    // dynamic_cast: o projeto compila com -fno-rtti.
+                    if (w->is_container()) {
+                        Container* child_container = static_cast<Container*>(w);
+                        WidgetEvent local{EventType::MouseDown,
+                                          ev.x - ax - w->bounds.x,
+                                          ev.y - ay - w->bounds.y, 0, 0};
+                        child_container->on_event(local);
+                    } else {
+                        WidgetEvent focus{EventType::Focus, 0, 0, 0, 0};
+                        w->on_event(focus);
+                    }
+                } else if (m_focused_child) {
+                    // Mesmo container já focado: ainda assim repassa o
+                    // clique para dentro dele, para o caso de o usuário
+                    // clicar em um widget folha DIFERENTE dentro do
+                    // mesmo container (ex.: sair do TextField e clicar
+                    // no Button, ambos dentro do mesmo VStack).
+                    if (w->is_container()) {
+                        Container* child_container = static_cast<Container*>(w);
+                        WidgetEvent local{EventType::MouseDown,
+                                          ev.x - ax - w->bounds.x,
+                                          ev.y - ay - w->bounds.y, 0, 0};
+                        child_container->on_event(local);
+                    }
                 }
                 break;
             }
@@ -60,7 +97,11 @@ EventResult Container::on_event(const WidgetEvent& ev) {
     }
 
     // KeyDown vai direto para o filho focado, sem checagem de
-    // posição (não é um evento de mouse).
+    // posição (não é um evento de mouse). Se o filho focado for
+    // ele mesmo um Container (ex.: VStack), repassamos para que
+    // ele entregue ao SEU próprio filho focado internamente —
+    // sem essa recursão, o KeyDown nunca alcançava um TextField
+    // aninhado dentro de um VStack.
     if (ev.type == EventType::KeyDown) {
         if (m_focused_child) {
             return m_focused_child->on_event(ev);
@@ -110,6 +151,28 @@ bool Container::focus_next() {
         WidgetEvent focus{EventType::Focus, 0, 0, 0, 0};
         next_candidate->on_event(focus);
         return true;
+    }
+    return false;
+}
+
+bool Container::focus_first() {
+    WidgetNode* cur = m_children.head();
+    while (cur) {
+        Widget* candidate = cur->widget;
+        if (candidate && candidate->visible && candidate->enabled) {
+            if (m_focused_child && m_focused_child != candidate) {
+                WidgetEvent blur{EventType::Blur, 0, 0, 0, 0};
+                m_focused_child->on_event(blur);
+            }
+            m_focused_child = candidate;
+            WidgetEvent focus{EventType::Focus, 0, 0, 0, 0};
+            candidate->on_event(focus);
+            if (candidate->is_container()) {
+                return static_cast<Container*>(candidate)->focus_first();
+            }
+            return true;
+        }
+        cur = cur->next;
     }
     return false;
 }

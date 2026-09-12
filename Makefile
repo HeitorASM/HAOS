@@ -69,7 +69,6 @@ C_SRCS   = kernel/kernel.c        \
            drivers/rtc.c          \
            drivers/ata_pio.c      \
            gui/screens/boot.c     \
-           gui/screens/welcome.c  \
            gui/elements/icons.c   \
            gui/wallpaper.c        \
            fs/vfs.c              \
@@ -80,6 +79,7 @@ CXX_SRCS = kernel/memory.cpp      \
            kernel/paging.cpp      \
            kernel/sysinfo.cpp     \
            kernel/crt.cpp         \
+           gui/screens/login.cpp  \
            gui/core/theme.cpp     \
            gui/core/widget.cpp    \
            gui/core/container.cpp \

@@ -78,7 +78,10 @@ static void desktop_handle_click(int32_t mx, int32_t my, uint32_t sw, uint32_t s
 extern "C" void run_desktop(void) {
     uint32_t sw = fb_width(), sh = fb_height();
     mouse_set_bounds((int32_t)sw - 1, (int32_t)sh - 1);
-    wallpaper_init();
+    // wallpaper_init() já rodou em gui_init(), antes do login — não
+    // repetir aqui evitaria resetar uma escolha de wallpaper feita
+    // durante a sessão anterior de configuração, quando isso passar
+    // a persistir em disco.
 
     terminal_win = terminal_create((int32_t)(sw/2 - 340),
                                    (int32_t)(sh/2 - 200));

@@ -21,11 +21,17 @@ public:
     const char* text() const { return m_text; }
     void set_text(const char* text);
 
+    // Quando true, cada caractere é desenhado como '*' em vez do
+    // texto real (m_text continua guardando o valor real — só o
+    // desenho muda). Usado por campos de senha.
+    void set_password_mode(bool enabled) { m_password_mode = enabled; }
+
 private:
     char     m_text[128];
     char     m_placeholder[64];
     uint32_t m_length;
     uint32_t m_cursor_pos; // índice do caractere onde o cursor está
+    bool     m_password_mode = false;
 
     void insert_char(uint8_t c);
     void backspace();

@@ -10,6 +10,7 @@
 #include "../../kernel/memory.h"
 #include "../../kernel/sysinfo.h"
 #include "../../kernel/lang.h"
+#include "../screens/login.h"
 
 #define CFG_W   560
 #define CFG_H   440
@@ -17,7 +18,7 @@
 
 enum ConfigCategory { CAT_SYSTEM = 0, CAT_PERSONALIZATION = 1, CAT_ABOUT = 2 };
 
-// ---- Painel: Sistema (idioma) ----
+// ---- Painel: Sistema (conta + idioma) ----
 class SystemPanel : public Panel {
 public:
     SystemPanel(int32_t x, int32_t y, uint32_t w, uint32_t h) : Panel(x, y, w, h, false) {
@@ -25,6 +26,16 @@ public:
 
         Label* title = new Label(0, 0, tr(STR_CONFIG_CATEGORY_SYSTEM));
         stack->add(title);
+
+        // ---- Conta atual (avatar + nome), como em Windows/macOS ----
+        stack->add(new Label(0, 0, tr(STR_CONFIG_ACCOUNT_SECTION)));
+        HStack* account_row = new HStack(0, 0, 48, 12);
+        Canvas* avatar = new Canvas(0, 0, 48, 48);
+        avatar->set_on_draw(&SystemPanel::draw_avatar);
+        account_row->add(avatar);
+        m_username_label = new Label(0, 0, login_get_current_username());
+        account_row->add(m_username_label);
+        stack->add(account_row);
 
         Label* lang_label = new Label(0, 0, tr(STR_CONFIG_LANGUAGE));
         stack->add(lang_label);
@@ -46,17 +57,41 @@ public:
 
     // Destaca visualmente qual idioma está ativo — chamado a cada
     // draw() já que lang_get() pode mudar por fora (ex.: se algum
-    // dia outro app também trocar o idioma).
+    // dia outro app também trocar o idioma). Também mantém o nome
+    // de usuário exibido em sincronia, pelo mesmo motivo.
     void draw(int32_t ox, int32_t oy) override {
         Lang cur = lang_get();
         m_btn_pt->set_active_style(cur == LANG_PT);
         m_btn_en->set_active_style(cur == LANG_EN);
+        m_username_label->set_text(login_get_current_username());
         Panel::draw(ox, oy);
     }
 
 private:
     Button* m_btn_pt;
     Button* m_btn_en;
+    Label*  m_username_label;
+
+    // Avatar simples: círculo com a inicial do nome em maiúscula,
+    // no mesmo espírito do círculo com iniciais usado por Windows
+    // e macOS quando o usuário não tem foto de perfil configurada.
+    static void draw_avatar(Canvas* /*self*/, int32_t ax, int32_t ay,
+                             uint32_t w, uint32_t h) {
+        const Theme* t = theme_current();
+        uint32_t cx = (uint32_t)ax + w / 2;
+        uint32_t cy = (uint32_t)ay + h / 2;
+        uint32_t r  = (w < h ? w : h) / 2;
+
+        fb_fill_circle(cx, cy, r, t->button_bg_pressed);
+
+        const char* name = login_get_current_username();
+        char initial[2] = { name[0] ? (char)(name[0] & ~0x20) : '?', '\0' };
+        // (& ~0x20 força maiúscula para letras ASCII — equivalente
+        // barato a toupper() sem depender de <ctype.h> freestanding)
+
+        uint32_t text_w = fb_text_width(initial);
+        fb_draw_string(cx - text_w / 2, cy - 8, initial, t->button_fg, 0, true);
+    }
 };
 
 // ---- Painel: Personalização (wallpaper + modo) ----

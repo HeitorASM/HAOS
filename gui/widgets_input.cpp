@@ -4,6 +4,8 @@
 #include "../kernel/keyboard.h"
 #include "../drivers/fb.h"
 
+extern "C" volatile uint64_t timer_ticks;
+
 TextField::TextField(int32_t x, int32_t y, uint32_t w, uint32_t h,
                      const char* placeholder)
     : Widget(x, y, w, h), m_length(0), m_cursor_pos(0)
@@ -56,21 +58,36 @@ void TextField::draw(int32_t ox, int32_t oy) {
     int32_t text_x = ax + (int32_t)t->spacing_sm;
     int32_t text_y = ay + (int32_t)((bounds.h - 16) / 2);
 
+    // Em modo senha, desenha '*' no lugar de cada caractere real —
+    // m_text continua guardando o valor verdadeiro, só a exibição
+    // muda. Precisa de um buffer à parte porque fb_draw_string
+    // espera uma string já pronta, não filtra caractere a caractere.
+    char display_buf[128];
+    const char* display_text = m_text;
+    if (m_password_mode && m_length > 0) {
+        for (uint32_t i = 0; i < m_length; i++) display_buf[i] = '*';
+        display_buf[m_length] = '\0';
+        display_text = display_buf;
+    }
+
     if (m_length == 0 && !focused) {
         // Placeholder — mesma cor "desabilitada" do tema, para
         // distinguir visualmente de texto real digitado.
         fb_draw_string((uint32_t)text_x, (uint32_t)text_y, m_placeholder,
                        t->label_fg_disabled, 0, true);
     } else {
-        fb_draw_string((uint32_t)text_x, (uint32_t)text_y, m_text,
+        fb_draw_string((uint32_t)text_x, (uint32_t)text_y, display_text,
                        t->textfield_fg, 0, true);
     }
 
     // Cursor: só desenhado quando focado — uma barra vertical fina
     // na posição correspondente a m_cursor_pos dentro do texto.
-    if (focused) {
+    bool cursor_visible = focused && ((timer_ticks / 35) % 2 == 0);
+    if (cursor_visible) {
         char before_cursor[128];
-        for (uint32_t i = 0; i < m_cursor_pos; i++) before_cursor[i] = m_text[i];
+        for (uint32_t i = 0; i < m_cursor_pos; i++) {
+            before_cursor[i] = m_password_mode ? '*' : m_text[i];
+        }
         before_cursor[m_cursor_pos] = '\0';
         uint32_t cursor_x = text_x + fb_text_width(before_cursor);
         fb_fill_rect(cursor_x, (uint32_t)(text_y - 1), 2, 16, t->textfield_cursor);
