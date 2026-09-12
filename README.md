@@ -39,9 +39,10 @@ O HAOS é um sistema operacional bare-metal de 64 bits desenvolvido de forma ind
 ### Interface Gráfica (GUI)
 - **Gerenciador de Janelas (WM):** Sistema de janelas com foco, arraste pelo título, minimização, fechamento e ordem de empilhamento.
 - **Widgets OOP (C++):** Hierarquia orientada a objetos com `Widget` (base abstrata), `Button`, `Label` e `Window` (contêiner).
-- **Desktop com Ícones:** Atalhos clicáveis para Terminal, Sobre, Configurações e Bloco de Notas.
+- **Desktop com Ícones:** Atalhos clicáveis para Terminal, Sobre, Configurações, Bloco de Notas e Explorador de Arquivos.
 - **Taskbar:** Barra de tarefas com botão Iniciar, clock em tempo real e indicador da janela ativa.
 - **Menu Iniciar:** Menu pop-up com acesso a aplicativos e opção de reinicialização.
+- **Explorador de Arquivos:** Navegação pela árvore VFS, retorno ao diretório pai ou à raiz, seleção de itens e abertura de arquivos textuais no Bloco de Notas por duplo clique.
 - **Sistema de Wallpaper:** Suporte a gradiente padrão ou imagens convertidas, com três modos de exibição — Preencher, Centralizar e Lado a lado.
 - **Cursor de Mouse:** Cursor renderizado em hardware com atualização por frame.
 - **Limitador de FPS:** Renderização limitada a ~50 fps via tick do PIT.
@@ -51,6 +52,7 @@ O HAOS é um sistema operacional bare-metal de 64 bits desenvolvido de forma ind
 - **Bloco de Notas (Editor):** Editor de texto multi-linha com cursor navegável (setas), seleção de texto (Shift+setas e mouse), copiar/colar/recortar (Ctrl+C/V/X), selecionar tudo (Ctrl+A), salvar (Ctrl+S ou F2) e diálogo "salvar como" integrado ao VFS.
 - **Sobre:** Janela com informações de versão, arquitetura, boot, vídeo, GUI, input e kernel.
 - **Configurações:** Janela para seleção de wallpaper, modo de exibição e idioma (Português/English), com informações de hardware (CPU, RAM, heap).
+- **Internacionalização dos aplicativos:** Textos do Explorador, do desktop, do terminal e das demais janelas são obtidos das tabelas de tradução em Português/Inglês.
 
 ### Sistema de Arquivos (VFS)
 - **Virtual File System:** Árvore de nós em memória com suporte a arquivos e diretórios.
@@ -74,17 +76,17 @@ O HAOS é um sistema operacional bare-metal de 64 bits desenvolvido de forma ind
 ├── drivers/        # Framebuffer, mouse, fonte, UTF-8↔CP437, bloco e ATA/IDE
 ├── fs/             # VFS e filesystem persistente HAOSFS
 ├── gui/
-│   ├── apps/       # Terminal, Sobre, Configurações
-│   ├── elements/   # Taskbar, Menu Iniciar, ícones do desktop, Widgets base (C++)
-│   ├── screens/    # Boot screen, Welcome screen, Desktop loop
-│   ├── gui.cpp     # Inicialização e loop principal da GUI em C++
-│   ├── wallpaper.cpp # Sistema de wallpaper (gradiente ou imagem)
-│   └── window.cpp    # Gerenciador de janelas e componentes gráficos (WM)
+│   ├── apps/       # Terminal, Explorador, Bloco de Notas, Sobre e Configurações
+│   ├── elements/   # Taskbar, Menu Iniciar e ícones do desktop
+│   ├── screens/    # Tela de boot, login e loop do desktop
+│   ├── gui.cpp     # Inicialização da GUI em C++
+│   ├── wallpaper.c # Sistema de wallpaper 
+│   └── core/       # Widgets, layouts, janelas e gerenciador de janelas
 ├── tools/
 │   └── img2wallpaper.py  # Ferramenta de conversão de imagens para wallpaper
 ├── iso/            # Configuração do GRUB para geração da imagem bootável
 ├── linker.ld       # Script de ligação para organização da memória 
-└── Makefile        # Automação de compilação e emulação
+└── Makefile        # Automação de compilação e geração da ISO
 ```
 
 ---
@@ -102,13 +104,8 @@ pip3 install Pillow
 
 | Comando | Descrição |
 | --- | --- |
+| `make` ou `make all` | Compila e gera `haos.elf` |
 | `make iso` | Compila o kernel e gera a imagem `haos.iso` |
-| `make run` | Inicia emulação via QEMU (GTK → SDL → VNC) |
-| `make run-gtk` | Força saída via GTK (ideal para WSLg) |
-| `make run-sdl` | Força saída via SDL |
-| `make run-vnc` | Executa sem display, acessível em `localhost:5900` |
-| `make run-elf` | Inicializa diretamente pelo ELF via QEMU |
-| `make debug` | Modo debug com GDB server na porta 1234 |
 | `make clean` | Remove artefatos de compilação |
 | `make wallpapers` | Recompila wallpapers convertidos |
 
@@ -135,13 +132,13 @@ Após converter, adicione os arquivos `.c` gerados ao `Makefile` em `WALLPAPER_S
 
 | Tecla | Ação |
 | --- | --- |
-| `S` | Alternar visibilidade do Menu Iniciar |
-| `T` | Abrir / focar o Terminal |
-| `A` | Abrir janela Sobre |
-| `C` | Abrir janela de Configurações |
-| `E` | Abrir Bloco de Notas |
-| `ESC` | Fechar menu ativo / janela |
-| **Mouse** | Clique para focar/arrastar janelas |
+| `ESC` | Fechar o menu ativo ou a janela focada |
+| `Backspace` | Voltar ao diretório pai no Explorador |
+| **Mouse** | Abrir aplicativos pelo desktop/Menu Iniciar, selecionar itens, navegar no Explorador e focar/arrastar janelas |
+
+O Explorador também possui os botões `Voltar` e `Início`. O duplo clique em um
+arquivo textual abre o conteúdo no Bloco de Notas; arquivos com byte nulo são
+tratados como binários e não são abertos pelo editor.
 
 ### Editor de Texto (Bloco de Notas)
 
