@@ -1,10 +1,19 @@
 #include "lang.h"
+#include "../fs/vfs.h"
 
 // ============================================================
 //  lang.c — Tabelas de strings PT/EN e lógica de tr()
 // ============================================================
 
 static Lang g_lang = LANG_PT;
+
+static VfsNode* lang_preferences_file(void) {
+    VfsNode* file = vfs_resolve(vfs_root(), "/etc/haos.lang");
+    if (file) return file;
+
+    VfsNode* etc = vfs_resolve(vfs_root(), "/etc");
+    return etc ? vfs_touch(etc, "haos.lang") : NULL;
+}
 
 // ---- Tabela: Português ----------------------------------------
 static const char* const g_pt[STR_COUNT] = {
@@ -384,10 +393,18 @@ static const char* const g_en[STR_COUNT] = {
 
 void lang_init(void) {
     g_lang = LANG_PT;
+
+    VfsNode* file = vfs_resolve(vfs_root(), "/etc/haos.lang");
+    if (file && file->type == VFS_FILE && file->size > 0 && file->data[0] == 'e')
+        g_lang = LANG_EN;
 }
 
 void lang_set(Lang l) {
-    if (l >= 0 && l < LANG_COUNT) g_lang = l;
+    if (l < 0 || l >= LANG_COUNT) return;
+    g_lang = l;
+
+    VfsNode* file = lang_preferences_file();
+    if (file) vfs_write(file, g_lang == LANG_EN ? "en\n" : "pt\n");
 }
 
 Lang lang_get(void) {
@@ -395,7 +412,7 @@ Lang lang_get(void) {
 }
 
 void lang_toggle(void) {
-    g_lang = (g_lang == LANG_PT) ? LANG_EN : LANG_PT;
+    lang_set((g_lang == LANG_PT) ? LANG_EN : LANG_PT);
 }
 
 const char* tr(StrID id) {

@@ -15,6 +15,8 @@
 #include "wallpaper.h"
 #include "../drivers/fb.h"
 #include "../kernel/types.h"
+#include "../kernel/memory.h"
+#include "../fs/vfs.h"
 
 // ── Modo B: wallpapers presentes ──────────────────────────────────────────
 #ifdef HAOS_HAS_WALLPAPERS
@@ -42,6 +44,41 @@ static const char* wallpaper_names[] = {
 static int           current_index = -1;
 static WallpaperMode current_mode  = WALLPAPER_MODE_FILL;
 
+static VfsNode* wallpaper_preferences_file(void) {
+    VfsNode* file = vfs_resolve(vfs_root(), "/etc/haos.wallpaper");
+    if (file) return file;
+
+    VfsNode* etc = vfs_resolve(vfs_root(), "/etc");
+    return etc ? vfs_touch(etc, "haos.wallpaper") : (VfsNode*)0;
+}
+
+static int parse_preference_number(const char* text, int fallback) {
+    int value = 0;
+    bool has_digit = false;
+    while (*text >= '0' && *text <= '9') {
+        value = value * 10 + (*text - '0');
+        has_digit = true;
+        text++;
+    }
+    return has_digit ? value : fallback;
+}
+
+static void wallpaper_save_preferences(void) {
+    VfsNode* file = wallpaper_preferences_file();
+    if (!file) return;
+
+    char index[16];
+    char mode[16];
+    char contents[40];
+    kitoa(current_index, index);
+    kitoa((int)current_mode, mode);
+    kstrcpy(contents, index);
+    kstrcat(contents, "\n");
+    kstrcat(contents, mode);
+    kstrcat(contents, "\n");
+    vfs_write(file, contents);
+}
+
 // ── API ───────────────────────────────────────────────────────────────────
 
 void wallpaper_init(void) {
@@ -52,6 +89,21 @@ void wallpaper_init(void) {
     current_index = -1;
 #endif
     current_mode  = WALLPAPER_MODE_FILL;
+
+    VfsNode* file = vfs_resolve(vfs_root(), "/etc/haos.wallpaper");
+    if (!file || file->type != VFS_FILE || file->size == 0) return;
+
+    const char* text = file->data;
+    current_index = parse_preference_number(text, current_index);
+    while (*text && *text != '\n') text++;
+    if (*text == '\n') {
+        int mode = parse_preference_number(text + 1, WALLPAPER_MODE_FILL);
+        if (mode >= WALLPAPER_MODE_FILL && mode <= WALLPAPER_MODE_TILE)
+            current_mode = (WallpaperMode)mode;
+    }
+
+    if (current_index < -1 || current_index >= WALLPAPER_COUNT)
+        current_index = -1;
 }
 
 void wallpaper_set(int index) {
@@ -59,11 +111,16 @@ void wallpaper_set(int index) {
         current_index = -1;
     else
         current_index = index;
+    wallpaper_save_preferences();
 }
 
 int wallpaper_get(void) { return current_index; }
 
-void wallpaper_set_mode(WallpaperMode mode) { current_mode = mode; }
+void wallpaper_set_mode(WallpaperMode mode) {
+    if (mode < WALLPAPER_MODE_FILL || mode > WALLPAPER_MODE_TILE) return;
+    current_mode = mode;
+    wallpaper_save_preferences();
+}
 WallpaperMode wallpaper_get_mode(void)      { return current_mode; }
 int  wallpaper_count(void)                  { return WALLPAPER_COUNT; }
 
