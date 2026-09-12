@@ -623,8 +623,8 @@ public:
         int track_h = lo.text_h;
         if (ev.type == EventType::MouseDown || ev.type == EventType::MouseDrag ||
             ev.type == EventType::MouseScroll) {
-            int x = bounds.x + ev.x;
-            int y = bounds.y + ev.y;
+            int x = ev.x;
+            int y = ev.y;
             bool on_bar = x >= track_x && x < track_x + (int)ScrollBar::DEFAULT_WIDTH &&
                           y >= track_y && y < track_y + track_h;
             if (on_bar || ev.type == EventType::MouseDrag) {
@@ -650,8 +650,8 @@ public:
         }
         if (ev.type == EventType::MouseUp) {
             WidgetEvent bar_ev = ev;
-            bar_ev.x = bounds.x + ev.x - track_x;
-            bar_ev.y = bounds.y + ev.y - track_y;
+            bar_ev.x = ev.x - track_x;
+            bar_ev.y = ev.y - track_y;
             m_scrollbar.on_event(bar_ev);
             return EventResult::Handled;
         }

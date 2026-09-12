@@ -8,6 +8,7 @@
 #include "../apps/about.h"
 #include "../apps/config.h"
 #include "../apps/editor.h"
+#include "../apps/file_manager.h"
 #include "../../drivers/fb.h"
 #include "../../drivers/font.h"
 #include "../../kernel/keyboard.h"
@@ -67,6 +68,12 @@ static void desktop_handle_click(int32_t mx, int32_t my, uint32_t sw, uint32_t s
     if (mx >= ICON_EDIT_X && mx < ICON_EDIT_X + ICON_W &&
         my >= ICON_EDIT_Y && my < ICON_EDIT_Y + ICON_H + ICON_LABEL_H) {
         editor_create((int32_t)(sw/2 - 300), (int32_t)(sh/2 - 200), nullptr);
+        start_menu_open = false;
+        return;
+    }
+    if (mx >= ICON_FILES_X && mx < ICON_FILES_X + ICON_W &&
+        my >= ICON_FILES_Y && my < ICON_FILES_Y + ICON_H + ICON_LABEL_H) {
+        file_manager_create((int32_t)(sw / 2 - 310), (int32_t)(sh / 2 - 220));
         start_menu_open = false;
         return;
     }
@@ -136,7 +143,11 @@ extern "C" void run_desktop(void) {
                 } else if (item == 3) {
                     open_config_window();
                     start_menu_open = false;
-                } else if (item == 5) {
+                } else if (item == 4) {
+                    file_manager_create((int32_t)(sw / 2 - 310),
+                                        (int32_t)(sh / 2 - 220));
+                    start_menu_open = false;
+                } else if (item == 6) {
                     outb(0x64, 0xFE);
                     while(1) __asm__("hlt");
                 } else if (item == -1) {

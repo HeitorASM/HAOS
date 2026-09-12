@@ -71,6 +71,7 @@ C_SRCS   = kernel/kernel.c        \
            gui/screens/boot.c     \
            gui/elements/icons.c   \
            gui/wallpaper.c        \
+           gui/apps/file_manager_fs.c \
            fs/vfs.c              \
            fs/haosfs.c
 
@@ -94,6 +95,7 @@ CXX_SRCS = kernel/memory.cpp      \
            gui/apps/config.cpp    \
            gui/apps/terminal.cpp  \
            gui/apps/editor.cpp    \
+           gui/apps/file_manager.cpp \
            gui/elements/taskbar.cpp \
            gui/elements/startmenu.cpp \
            gui/sidebar_nav.cpp

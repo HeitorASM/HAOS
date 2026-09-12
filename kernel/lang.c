@@ -75,6 +75,7 @@ static const char* const g_pt[STR_COUNT] = {
     [STR_ICON_TERMINAL]         = "Terminal",
     [STR_ICON_ABOUT]            = "Sobre",
     [STR_ICON_SETTINGS]         = "Config.",
+    [STR_ICON_FILES]            = "Explorador",
 
     [STR_ABOUT_WINDOW_TITLE]    = "Sobre o HAOS",
     [STR_ABOUT_HEADER]          = "HAOS -- Home-built OS",
@@ -201,6 +202,16 @@ static const char* const g_pt[STR_COUNT] = {
     [STR_EDITOR_CHARS_LABEL]   = "  Caract ",
     [STR_ICON_EDITOR]          = "Bloco de Notas",
     [STR_TERM_HELP_EDIT]       = "  edit <nome>   -- abre o bloco de notas",
+
+    [STR_FILE_MANAGER_TITLE]   = "Explorador de Arquivos",
+    [STR_FILE_MANAGER_BACK]    = "Voltar",
+    [STR_FILE_MANAGER_HOME]    = "Inicio",
+    [STR_FILE_MANAGER_NAME]    = "Nome",
+    [STR_FILE_MANAGER_TYPE]    = "Tipo",
+    [STR_FILE_MANAGER_SIZE]    = "Tamanho",
+    [STR_FILE_MANAGER_EMPTY]   = "(diretorio vazio)",
+    [STR_FILE_MANAGER_BINARY]  = "Arquivo binario: nao aberto no Bloco de Notas",
+    [STR_FILE_MANAGER_OPENED]  = "Arquivo aberto no Bloco de Notas",
 };
 
 // ---- Tabela: English -------------------------------------------
@@ -263,6 +274,7 @@ static const char* const g_en[STR_COUNT] = {
     [STR_ICON_TERMINAL]         = "Terminal",
     [STR_ICON_ABOUT]            = "About",
     [STR_ICON_SETTINGS]         = "Settings",
+    [STR_ICON_FILES]            = "File Manager",
 
     [STR_ABOUT_WINDOW_TITLE]    = "About HAOS",
     [STR_ABOUT_HEADER]          = "HAOS -- Home-built OS",
@@ -389,6 +401,16 @@ static const char* const g_en[STR_COUNT] = {
     [STR_EDITOR_CHARS_LABEL]   = "  Chars ",
     [STR_ICON_EDITOR]          = "Notepad",
     [STR_TERM_HELP_EDIT]       = "  edit <name>   -- opens the notepad",
+
+    [STR_FILE_MANAGER_TITLE]   = "File Manager",
+    [STR_FILE_MANAGER_BACK]    = "Back",
+    [STR_FILE_MANAGER_HOME]    = "Home",
+    [STR_FILE_MANAGER_NAME]    = "Name",
+    [STR_FILE_MANAGER_TYPE]    = "Type",
+    [STR_FILE_MANAGER_SIZE]    = "Size",
+    [STR_FILE_MANAGER_EMPTY]   = "(empty directory)",
+    [STR_FILE_MANAGER_BINARY]  = "Binary file: not opened in Notepad",
+    [STR_FILE_MANAGER_OPENED]  = "File opened in Notepad",
 };
 
 void lang_init(void) {

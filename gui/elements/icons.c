@@ -83,9 +83,23 @@ void draw_icon_editor(uint32_t ix, uint32_t iy) {
                              COLOR_TEXT_LIGHT, 0, true);
 }
 
+void draw_icon_files(uint32_t ix, uint32_t iy) {
+    fb_draw_rounded_rect(ix, iy, ICON_W, ICON_H, 0x202018, 7);
+    fb_fill_rect(ix + 2, iy + 2, ICON_W - 4, 1, 0x7A7440);
+
+    fb_fill_rect(ix + 12, iy + 12, 32, 26, 0xD9B84A);
+    fb_fill_rect(ix + 12, iy + 9, 16, 6, 0xE6C960);
+    fb_fill_rect(ix + 15, iy + 18, 26, 2, 0xA88C32);
+
+    fb_draw_string_centered(ix - 4, iy + ICON_H + 4, ICON_W + 8,
+                             ICON_LABEL_H, tr(STR_ICON_FILES),
+                             COLOR_TEXT_LIGHT, 0, true);
+}
+
 void draw_desktop_icons(void) {
     draw_icon_terminal(ICON_TERM_X, ICON_TERM_Y);
     draw_icon_about(ICON_ABOUT_X, ICON_ABOUT_Y);
     draw_icon_settings(ICON_CONF_X, ICON_CONF_Y);
     draw_icon_editor(ICON_EDIT_X, ICON_EDIT_Y);
+    draw_icon_files(ICON_FILES_X, ICON_FILES_Y);
 }

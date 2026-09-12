@@ -9,7 +9,7 @@
 #define MENU_HEADER_H 44
 #define MENU_ITEM_H   34
 #define MENU_FOOTER_H 40  
-#define MENU_ITEM_COUNT 7 
+#define MENU_ITEM_COUNT 8 
 
 struct MenuItemDef { const char* prefix; int str_id; bool is_separator; };
 
@@ -18,9 +18,10 @@ static void build_items(const char** out_labels, char (*bufs)[40]) {
     kstrcpy(bufs[1], ""); kstrcat(bufs[1], tr(STR_ABOUT));
     kstrcpy(bufs[2], ""); kstrcat(bufs[2], tr(STR_ICON_EDITOR));
     kstrcpy(bufs[3], ""); kstrcat(bufs[3], tr(STR_SETTINGS));
-    bufs[4][0] = 0; // separador
-    kstrcpy(bufs[5], ""); kstrcat(bufs[5], tr(STR_RESTART));
-    kstrcpy(bufs[6], ""); kstrcat(bufs[6], tr(STR_SHUTDOWN));
+    kstrcpy(bufs[4], ""); kstrcat(bufs[4], tr(STR_ICON_FILES));
+    bufs[5][0] = 0; // separador
+    kstrcpy(bufs[6], ""); kstrcat(bufs[6], tr(STR_RESTART));
+    kstrcpy(bufs[7], ""); kstrcat(bufs[7], tr(STR_SHUTDOWN));
     for (int i = 0; i < MENU_ITEM_COUNT; i++) out_labels[i] = bufs[i];
 }
 
@@ -80,7 +81,7 @@ int start_menu_hit_test(int32_t mx_click, int32_t my_click) {
     int iy = (int)my + (int)MENU_HEADER_H + 6;
     for (int i = 0; i < MENU_ITEM_COUNT; i++) {
         // Separador (índice 4) não é clicável — só ocupa espaço.
-        bool is_separator = (i == 4);
+        bool is_separator = (i == 5);
         if (!is_separator &&
             my_click >= iy && my_click < iy + (int)MENU_ITEM_H - 2) {
             return i;
