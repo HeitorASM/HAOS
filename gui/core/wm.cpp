@@ -119,6 +119,9 @@ Window* wm_create(WinType type, int32_t x, int32_t y,
     if (slot < 0) return nullptr;
 
     Window* win = new Window(x, y, w, h, title, type);
+    if (!win) return nullptr; // heap esgotada — ver comentário em
+                                // terminal_create (com -fno-exceptions,
+                                // `new` devolve nullptr em vez de lançar)
     s_windows[slot] = win;
     wm_focus(win);
     return win;
@@ -132,6 +135,44 @@ bool wm_register(Window* win) {
     s_windows[slot] = win;
     wm_focus(win);
     return true;
+}
+
+// ---- Fila de ações diferidas (ver comentário extenso em wm.h) ----
+#define WM_MAX_DEFERRED 8
+
+namespace {
+struct DeferredAction {
+    wm_deferred_fn fn;
+    void*          arg;
+};
+DeferredAction s_deferred[WM_MAX_DEFERRED];
+int            s_deferred_count = 0;
+}
+
+bool wm_defer(wm_deferred_fn fn, void* arg) {
+    if (!fn) return false;
+    if (s_deferred_count >= WM_MAX_DEFERRED) return false;
+    s_deferred[s_deferred_count].fn  = fn;
+    s_deferred[s_deferred_count].arg = arg;
+    s_deferred_count++;
+    return true;
+}
+
+void wm_run_deferred_actions(void) {
+    // Copia e zera a fila ANTES de executar qualquer ação: se uma
+    // ação registrar outra ação diferida (perfeitamente legítimo),
+    // a nova entra na fila já vazia e roda só na PRÓXIMA passagem —
+    // nunca dentro desta. Sem essa cópia, uma ação que se
+    // re-registrasse a si mesma criaria um laço infinito aqui
+    // dentro, travando o sistema.
+    DeferredAction pending[WM_MAX_DEFERRED];
+    int count = s_deferred_count;
+    for (int i = 0; i < count; i++) pending[i] = s_deferred[i];
+    s_deferred_count = 0;
+
+    for (int i = 0; i < count; i++) {
+        if (pending[i].fn) pending[i].fn(pending[i].arg);
+    }
 }
 
 void wm_close(Window* win) {

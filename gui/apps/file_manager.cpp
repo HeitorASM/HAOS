@@ -7,6 +7,7 @@
 #include "../../kernel/memory.h"
 #include "../../kernel/types.h"
 #include "../../kernel/lang.h"
+#include "terminal.h"
 
 extern "C" volatile uint64_t timer_ticks;
 
@@ -21,6 +22,16 @@ constexpr int32_t ROW_H = 24;
 constexpr int32_t STATUS_H = 22;
 constexpr uint64_t DOUBLE_CLICK_TICKS = 35;
 
+// Buffer estático para o caminho do .hexec aguardando execução
+// diferida (ver wm_defer em open_selected). Precisa ser estático e
+// não uma variável local: a ação diferida só roda DEPOIS que
+// open_selected() já retornou, então qualquer buffer na pilha dela
+// já teria deixado de existir. Um único buffer basta porque o
+// usuário só consegue dar um duplo-clique por vez, e a fila é
+// drenada a cada frame — bem antes de um segundo duplo-clique ser
+// fisicamente possível.
+static char s_pending_exec_path[512];
+
 class FileManagerWindow : public Window {
 public:
     VfsNode* current_dir;
@@ -28,6 +39,15 @@ public:
     VfsNode* last_clicked;
     uint64_t last_click_tick;
     char status[96];
+
+    // Executada pelo WM num ponto seguro (ver wm_run_deferred_actions),
+    // fora de qualquer despacho de evento. `arg` aponta para
+    // s_pending_exec_path.
+    static void deferred_run_hexec(void* arg) {
+        const char* path = (const char*)arg;
+        uint32_t sw = fb_width(), sh = fb_height();
+        terminal_create_and_run((int32_t)(sw / 2 - 300), (int32_t)(sh / 2 - 200), path);
+    }
 
     FileManagerWindow(int32_t x, int32_t y, uint32_t w, uint32_t h, const char* title)
         : Window(x, y, w, h, title, WinType::Generic),
@@ -109,10 +129,17 @@ public:
             const char* marker = child->type == VFS_DIR
                 ? tr(STR_TERM_STAT_TYPE_DIR) : tr(STR_TERM_STAT_TYPE_FILE);
             uint32_t marker_color = child->type == VFS_DIR ? COLOR_ACCENT : COLOR_TEXT_GRAY;
+            uint32_t name_color = COLOR_TEXT_LIGHT;
+            if (child->type == VFS_FILE && file_manager_is_executable(child)) {
+                // Destaca executáveis (.hexec) com uma cor diferente na
+                // listagem — sinal visual de que um duplo-clique roda o
+                // programa em vez de abrir no editor de texto.
+                name_color = COLOR_GREEN;
+            }
             fb_draw_string((uint32_t)(left + width - 160),
                            (uint32_t)(row_y + 5), marker, marker_color, 0, true);
             fb_draw_string((uint32_t)(left + 8), (uint32_t)(row_y + 5),
-                           child->name, COLOR_TEXT_LIGHT, 0, true);
+                           child->name, name_color, 0, true);
 
             if (child->type == VFS_FILE) {
                 char size_text[24];
@@ -141,6 +168,36 @@ public:
             selected = nullptr;
             last_clicked = nullptr;
             status[0] = 0;
+            return;
+        }
+        if (file_manager_is_executable(node)) {
+            // Duplo-clique num .hexec abre um terminal novo e roda o
+            // programa nele (equivalente a digitar "run <arquivo>" —
+            // ver terminal_create_and_run), em vez de disparar o
+            // processo "às cegas" sem lugar nenhum para mostrar sua
+            // saída. O explorador de arquivos não executa nada por
+            // conta própria; ele só delega ao terminal, que é quem
+            // de fato possui a lógica de execução (process_create +
+            // drenagem de stdout).
+            //
+            // A criação da janela é DIFERIDA (wm_defer) em vez de
+            // imediata: estamos neste exato momento dentro de um
+            // handler de evento de mouse, ou seja, dentro da iteração
+            // que o WM faz sobre sua própria lista de janelas. Criar
+            // uma janela aqui modificaria essa lista e o índice de
+            // foco no meio da iteração — foi exatamente isso que
+            // travava o sistema ao abrir um segundo .hexec sem fechar
+            // o terminal anterior. Com wm_defer, a criação acontece
+            // no próximo ponto seguro do loop principal, com nenhum
+            // despacho de evento em andamento.
+            file_manager_path(node, s_pending_exec_path, sizeof(s_pending_exec_path));
+            if (wm_defer(&FileManagerWindow::deferred_run_hexec, s_pending_exec_path)) {
+                set_status(tr(STR_FILE_MANAGER_EXEC_STARTED));
+            } else {
+                // Fila de ações diferidas cheia — melhor avisar do que
+                // falhar em silêncio.
+                set_status(tr(STR_FILE_MANAGER_EXEC_FAILED));
+            }
             return;
         }
         if (!file_manager_is_text(node)) {
@@ -221,6 +278,7 @@ public:
 Window* file_manager_create(int32_t x, int32_t y) {
     FileManagerWindow* win = new FileManagerWindow(x, y, 620, 440,
                                                     tr(STR_FILE_MANAGER_TITLE));
+    if (!win) return nullptr; // heap esgotada — ver terminal_create
     if (!wm_register(win)) {
         delete win;
         return nullptr;

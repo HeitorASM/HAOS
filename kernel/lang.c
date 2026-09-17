@@ -212,6 +212,8 @@ static const char* const g_pt[STR_COUNT] = {
     [STR_FILE_MANAGER_EMPTY]   = "(diretorio vazio)",
     [STR_FILE_MANAGER_BINARY]  = "Arquivo binario: nao aberto no Bloco de Notas",
     [STR_FILE_MANAGER_OPENED]  = "Arquivo aberto no Bloco de Notas",
+    [STR_FILE_MANAGER_EXEC_STARTED] = "Processo iniciado - aguardando o escalonador",
+    [STR_FILE_MANAGER_EXEC_FAILED]  = "Falha ao executar (ver run no terminal para detalhes)",
 };
 
 // ---- Tabela: English -------------------------------------------
@@ -411,6 +413,8 @@ static const char* const g_en[STR_COUNT] = {
     [STR_FILE_MANAGER_EMPTY]   = "(empty directory)",
     [STR_FILE_MANAGER_BINARY]  = "Binary file: not opened in Notepad",
     [STR_FILE_MANAGER_OPENED]  = "File opened in Notepad",
+    [STR_FILE_MANAGER_EXEC_STARTED] = "Process started - waiting for the scheduler",
+    [STR_FILE_MANAGER_EXEC_FAILED]  = "Failed to run (see 'run' in the terminal for details)",
 };
 
 void lang_init(void) {

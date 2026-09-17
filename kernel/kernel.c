@@ -8,6 +8,8 @@
 #include "paging.h"
 #include "syscall.h"
 #include "usermode.h"
+#include "task.h"
+#include "scheduler.h"
 #include "sysinfo.h"
 #include "lang.h"
 #include "../drivers/fb.h"
@@ -53,6 +55,22 @@ void kernel_main(uint32_t magic, uint32_t mb_info_raw) {
 
     // Teclado e Mouse
     keyboard_init();
+
+    // ---- Scheduler / multitarefa (etapa 1: kernel threads) ----
+    // PRECISA vir ANTES do "sti" abaixo: assim que interrupções são
+    // habilitadas, o PIT (IRQ0) começa a chamar scheduler_tick() a
+    // cada 10ms. Sem a fila do scheduler já montada, isso seria uma
+    // desreferência de ponteiro nulo dentro do handler de interrupção
+    // — trava o boot inteiro antes até do framebuffer ser inicializado,
+    // sem nenhuma mensagem na tela (foi exatamente esse o bug que
+    // causou tela 100% preta ao testar no VirtualBox: o "sti" já
+    // rodava bem antes de tasking_init()/scheduler_init() existirem).
+    // scheduler_tick() também tem uma guarda defensiva própria para o
+    // caso de outro ponto de inicialização futuro cometer o mesmo
+    // deslize, mas a ordem correta é esta: inicializar o scheduler
+    // antes de habilitar interrupções, não depois.
+    tasking_init();
+    scheduler_init();
 
     // Habilita interrupções
     __asm__ volatile("sti");

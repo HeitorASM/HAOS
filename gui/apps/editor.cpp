@@ -774,8 +774,11 @@ static bool editor_save_as(EditorState* e, EditorWindow* win, const char* name) 
     if (ok && win) {
         char title[96];
         kstrcpy(title, tr(STR_EDITOR_TITLE));
-        kstrcat(title, " -- ");
-        kstrcat(title, e->filename);
+        kstrncat(title, " -- ", sizeof(title));
+        // kstrncat: e->filename tem tamanho imprevisível e `title` é
+        // um buffer fixo de 96 bytes — concatenar sem limite aqui
+        // estouraria a pilha com um nome de arquivo longo.
+        kstrncat(title, e->filename, sizeof(title));
         kstrncpy(win->title, title, sizeof(win->title) - 1);
 
         win->m_title_shows_dirty = false;
@@ -827,8 +830,11 @@ Window* editor_create(int32_t x, int32_t y, const char* path) {
         }
         char title[96];
         kstrcpy(title, tr(STR_EDITOR_TITLE));
-        kstrcat(title, " -- ");
-        kstrcat(title, path);
+        kstrncat(title, " -- ", sizeof(title));
+        // kstrncat: `path` é um caminho absoluto de tamanho
+        // imprevisível (até 512 bytes em alguns chamadores) e
+        // `title` tem só 96 — mesmo risco de estouro de pilha.
+        kstrncat(title, path, sizeof(title));
         kstrncpy(win->title, title, sizeof(win->title) - 1);
     }
 

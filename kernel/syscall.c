@@ -20,7 +20,7 @@
 #include "types.h"
 #include "memory.h"
 #include "paging.h"
-#include "../drivers/fb.h"
+#include "task.h"
 
 extern void syscall_entry(void); // definido em syscall_asm.asm
 
@@ -104,12 +104,18 @@ static bool validate_user_range(uint64_t addr, uint64_t len) {
 }
 
 // ---- SYS_WRITE(ptr, len) ----
-// Desenha os bytes recebidos como texto numa linha fixa da tela.
-// Numa etapa futura isso deveria ir para o processo dono da janela
-// ativa (via message port, como discutimos lá no início sobre o
-// AROS) — por ora, direto no framebuffer, só para provar a pilha.
+// Copia os bytes recebidos para o canal de saída (stdout) da task
+// atual (ver task_stdout_write em task.c), em vez de desenhar
+// direto no framebuffer global. O terminal que lançou este processo
+// (task->stdout_owner) drena esse buffer a cada frame do seu loop
+// de eventos e imprime como texto normal — isso resolve dois
+// problemas da abordagem anterior: (1) a saída não competia mais
+// visualmente com o redesenho da GUI (que fazia o texto "piscar e
+// sumir", já que o desktop redesenha o framebuffer inteiro a cada
+// frame); (2) a saída agora tem um dono claro (o terminal que
+// lançou o processo), abrindo caminho para múltiplos terminais/
+// processos coexistindo sem escreverem uns por cima dos outros.
 #define SYS_WRITE_MAX_LEN 256
-static uint32_t s_write_line_y = 400; // avança a cada chamada, só para visibilidade no teste
 
 static uint64_t sys_write(uint64_t user_ptr, uint64_t len) {
     if (len > SYS_WRITE_MAX_LEN) len = SYS_WRITE_MAX_LEN;
@@ -117,37 +123,49 @@ static uint64_t sys_write(uint64_t user_ptr, uint64_t len) {
         return (uint64_t)-1; // endereço inválido/não mapeado — recusa
     }
 
-    char buf[SYS_WRITE_MAX_LEN + 1];
+    uint8_t buf[SYS_WRITE_MAX_LEN];
     kmemcpy(buf, (const void*)user_ptr, len);
-    buf[len] = '\0';
 
-    fb_draw_string(30, s_write_line_y, buf, COLOR_GREEN, COLOR_BLACK, false);
-    s_write_line_y += 18;
-    fb_flip(); // copia o shadow buffer para o framebuffer real — sem
-               // isso, o texto é desenhado "invisivelmente" na memória
-               // de sombra e a tela física continua preta (foi
-               // exatamente o bug que causou a tela preta reportada:
-               // fb_draw_string escreve no shadow buffer quando ele
-               // está configurado, e só fb_flip() o torna visível).
+    task_t* t = task_current();
+    task_stdout_write(t, buf, len);
     return len;
 }
 
 // ---- SYS_EXIT(code) ----
-// Sem scheduler ainda, não há "processo anterior" para retomar.
-// O melhor que dá para fazer com segurança é parar a CPU de forma
-// controlada, deixando visível que o processo terminou de propósito
-// (não é um crash) — isso muda assim que houver múltiplas tasks.
+// Encerra o processo de usuário atual chamando task_exit(), que
+// marca a task como ZOMBIE e força uma troca de contexto imediata
+// para a próxima task pronta — o scheduler assume o controle da
+// CPU de verdade a partir daqui, em vez do "hlt" que esta syscall
+// fazia antes do scheduler existir (quando não havia para onde
+// voltar). A pilha/imagem deste processo são liberadas depois,
+// pelo reaper (ver task_reap_zombies), não aqui.
+//
+// ATENÇÃO — por que isto é seguro apesar de syscall_entry usar uma
+// ÚNICA pilha de kernel global (syscall_stack, em syscall_asm.asm)
+// compartilhada por TODAS as syscalls de TODAS as tasks: task_exit()
+// aciona um task_switch() que empilha o contexto callee-saved desta
+// task EM CIMA dessa mesma syscall_stack global, não na pilha de
+// kernel própria da task (essa só é usada para IRQs via TSS.RSP0,
+// não para o corpo de uma syscall). Isso só não corrompe nada porque
+// esta task nunca mais vai retornar para cima dessa pilha (está
+// TASK_ZOMBIE) — nenhuma outra syscall vai rodar "por baixo" desse
+// contexto empilhado antes dele se tornar irrelevante. QUALQUER
+// outra syscall que um dia precise chamar scheduler_yield()/
+// task_switch() SEM ser um caminho sem-retorno como este teria que
+// primeiro resolver isso (dar a cada task sua própria pilha de
+// syscall, não uma global) — não fazer isso silenciosamente
+// corromperia o estado de outras tasks.
 static _Noreturn uint64_t sys_exit(uint64_t code) {
-    char msg[64] = "[teste] processo de usuario chamou sys_exit(";
-    char numbuf[24];
-    kuitoa(code, numbuf);
-    kstrcat(msg, numbuf);
-    kstrcat(msg, ")");
-    fb_draw_string(30, s_write_line_y + 30, msg, COLOR_ACCENT, COLOR_BLACK, false);
-    fb_flip(); // mesmo motivo do sys_write — ver comentário lá
-
-    __asm__ volatile ("cli");
-    while (1) __asm__ volatile ("hlt");
+    task_t* t = task_current();
+    // Marcado ANTES de task_exit(): o terminal dono (stdout_owner)
+    // observa has_exited para mostrar "processo encerrado (código X)"
+    // uma única vez, mesmo enquanto a task ainda está TASK_ZOMBIE
+    // aguardando o reaper — sem isso, o terminal não teria como saber
+    // que o processo terminou até o slot inteiro ser reciclado.
+    t->exit_code  = code;
+    t->has_exited = true;
+    task_exit(); // nunca retorna
+    __builtin_unreachable();
 }
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,

@@ -53,6 +53,42 @@ void    wm_draw_all(void);
 
 void    wm_dispatch_key(uint8_t c);
 
+// ============================================================
+//  Ações diferidas (deferred actions)
+// ============================================================
+//
+// PROBLEMA QUE ISTO RESOLVE: criar ou destruir uma janela DE DENTRO
+// de um handler de evento (ex.: o explorador de arquivos abrindo um
+// terminal ao receber um duplo-clique) modifica o array interno de
+// janelas do WM e o índice de foco EXATAMENTE enquanto wm_mouse_down()
+// / wm_dispatch_key() ainda estão no meio da iteração sobre esse
+// mesmo array — modificação de coleção durante iteração, com
+// resultado imprevisível (janela órfã, foco apontando para o índice
+// errado, ou travamento total do sistema).
+//
+// SOLUÇÃO: em vez de agir imediatamente, um handler de evento
+// registra o que quer fazer numa fila, e o WM executa essas ações
+// depois, num ponto seguro — quando nenhum despacho de evento está
+// em andamento (ver wm_run_deferred_actions, chamada pelo loop
+// principal do desktop a cada frame, entre o processamento de
+// entrada e o desenho).
+//
+// Registra uma função para ser executada no próximo ponto seguro.
+// `arg` é repassado tal e qual para ela. Retorna false se a fila
+// estiver cheia (nesse caso a ação NÃO será executada — quem chama
+// deve tratar isso, tipicamente mostrando uma mensagem de erro ao
+// usuário em vez de falhar silenciosamente).
+typedef void (*wm_deferred_fn)(void* arg);
+bool wm_defer(wm_deferred_fn fn, void* arg);
+
+// Executa e limpa todas as ações pendentes registradas por
+// wm_defer(). Deve ser chamada pelo loop principal APENAS quando
+// nenhum handler de evento está em execução. É seguro que uma ação
+// diferida registre outra ação diferida: a nova fica para a próxima
+// passagem, não é executada dentro desta (evita recursão infinita
+// se duas ações ficarem se re-registrando).
+void wm_run_deferred_actions(void);
+
 // Mouse events — retorna true se o evento foi consumido por
 // alguma janela (usado pelo desktop.cpp para decidir se o clique
 // "vazou" para ícones/taskbar por baixo).

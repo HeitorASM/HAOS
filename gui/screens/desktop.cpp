@@ -16,6 +16,7 @@
 #include "../../kernel/types.h"
 #include "../../kernel/memory.h"
 #include "../../kernel/lang.h"
+#include "../../kernel/task.h"
 #include "../wallpaper.h"
 
 extern "C" volatile uint64_t timer_ticks;
@@ -95,8 +96,21 @@ extern "C" void run_desktop(void) {
 
     bool was_pressed = false;
 
+    // Throttle do reaper de tasks zumbis: rodar isso a cada frame do
+    // desktop seria desperdício (na imensa maioria dos frames não há
+    // nenhuma task zumbi para coletar). Uma vez por segundo é mais
+    // que suficiente para a Fase 1 (poucas kernel threads de vida
+    // curta) — reavaliar se/quando processos de usuário passarem a
+    // nascer e morrer com muito mais frequência.
+    uint64_t next_reap_tick = timer_ticks + 100; // pit_init(100) => 100 ticks/s
+
     while (1) {
         uint64_t ticks = timer_ticks;
+
+        if (ticks >= next_reap_tick) {
+            task_reap_zombies();
+            next_reap_tick = ticks + 100;
+        }
 
         uint8_t c;
         while ((c = keyboard_getchar()) != 0)
@@ -167,6 +181,21 @@ extern "C" void run_desktop(void) {
             wm_mouse_up(mx, my);
 
         was_pressed = pressed;
+
+        // Ponto seguro para executar ações diferidas: todo o
+        // processamento de entrada deste frame já terminou (nenhum
+        // handler de evento está na pilha de chamadas), e o desenho
+        // ainda não começou. É aqui que janelas pedidas de dentro de
+        // handlers (ex.: o explorador abrindo um terminal ao
+        // duplo-clicar num .hexec) são de fato criadas, sem modificar
+        // as listas do WM no meio de uma iteração sobre elas.
+        //
+        // Fica ANTES do `continue` do throttle de render logo abaixo
+        // de propósito: se ficasse depois, uma ação enfileirada
+        // poderia esperar vários frames (ou nunca rodar, se o
+        // throttle sempre pulasse essa parte) — o usuário veria o
+        // duplo-clique simplesmente não fazer nada.
+        wm_run_deferred_actions();
 
         if (ticks - last_render_tick < 2) {
             __asm__("pause");

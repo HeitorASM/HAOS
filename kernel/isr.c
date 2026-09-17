@@ -12,6 +12,7 @@
 // ============================================================
 
 #include "isr.h"
+#include "task.h"
 #include "idt.h"
 #include "types.h"
 #include "memory.h"
@@ -146,6 +147,30 @@ static void isr_panic_screen(regs_t* r) {
         fb_draw_string(30, s_panic_y, "Motivo:", 0x9FB6D9, 0x1A0000, false);
         fb_draw_string(220, s_panic_y, reason, COLOR_WHITE, 0x1A0000, false);
         s_panic_y += 20;
+
+        // Diagnóstico específico: esse endereço é a guard page de
+        // alguma kernel thread? Se sim, quase certamente é overflow
+        // de pilha, não um bug aleatório de ponteiro — vale a pena
+        // dizer isso explicitamente, já que muda completamente por
+        // onde o desenvolvedor deve procurar o problema (aumentar
+        // TASK_STACK_PAGES ou revisar recursão/buffers grandes na
+        // stack daquela thread, em vez de caçar um ponteiro selvagem).
+        char task_name[TASK_NAME_MAX];
+        if (task_addr_is_guard_page(fault_addr, task_name)) {
+            fb_draw_string(30, s_panic_y, "Diagnostico:", 0xFFCC66, 0x1A0000, false);
+            char msg[80];
+            kstrcpy(msg, "STACK OVERFLOW na kernel thread \"");
+            // kstrncat (com limite): embora task_name seja limitado a
+            // TASK_NAME_MAX, este é código de PANIC HANDLER — roda
+            // quando o sistema já está em estado degradado, possivelmente
+            // com memória corrompida. Um estouro de buffer justo aqui
+            // destruiria a única fonte de diagnóstico disponível. Vale
+            // o cuidado extra mesmo quando o tamanho "deveria" caber.
+            kstrncat(msg, task_name, sizeof(msg));
+            kstrncat(msg, "\"", sizeof(msg));
+            fb_draw_string(220, s_panic_y, msg, 0xFFCC66, 0x1A0000, false);
+            s_panic_y += 20;
+        }
     }
 
     s_panic_y += 10;

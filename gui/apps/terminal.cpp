@@ -10,6 +10,7 @@
 #include "../../kernel/lang.h"
 #include "editor.h"
 #include "../widgets_basic.h"
+#include "../../kernel/process.h"
 
 #define PAD 8
 #define TERM_CMD_HISTORY 20
@@ -31,6 +32,26 @@ struct TermState {
     char cmd_history[TERM_CMD_HISTORY][TERM_BUF_SIZE];
     int  cmd_hist_count;
     int  cmd_hist_pos;
+
+    // ---- Processo de usuário rodando "dentro" deste terminal ----
+    // Só um processo por terminal — cada terminal mostra a saída de
+    // um programa de cada vez. Desde a Fase 3 (isolamento de espaço
+    // de endereço, ver hexec.h/paging.h), isso NÃO limita o sistema
+    // a um processo só: terminais diferentes podem rodar processos
+    // diferentes ao mesmo tempo, cada um com seu próprio address
+    // space. running_process fica NULL quando nenhum programa está
+    // em execução NESTE terminal específico. Enquanto não-NULL,
+    // term_update_running_process() (chamada a cada frame do loop do
+    // terminal) drena a saída do processo (task_stdout_read) e a
+    // imprime como texto normal, e detecta o momento em que o
+    // processo chama sys_exit (has_exited) para mostrar a mensagem
+    // final e liberar este slot para um novo "run".
+    task_t*  running_process;
+    // Linha parcial (ainda sem '\n') acumulada entre um dreno e
+    // outro — sys_write pode entregar os bytes em pedaços que não
+    // batem exatamente com o fim de uma linha.
+    char     running_line_buf[TERM_COLS + 1];
+    int      running_line_len;
 };
 
 static void term_scroll(TermState* t) {
@@ -189,13 +210,18 @@ static void cmd_ls(TermState* t, const char* path_arg) {
         kmemset(line, 0, sizeof(line));
         if (child->type == VFS_DIR) kstrcpy(line, "  [DIR]  ");
         else                        kstrcpy(line, "  [ARQ]  ");
-        kstrcat(line, child->name);
+        // kstrncat (com limite) em vez de kstrcat: child->name tem
+        // tamanho imprevisível e `line` é um buffer fixo de
+        // TERM_COLS+1 — um nome de arquivo longo estouraria a pilha
+        // aqui. O resultado é truncado na largura do terminal, que é
+        // exatamente o comportamento desejado para uma listagem.
+        kstrncat(line, child->name, sizeof(line));
         if (child->type == VFS_FILE) {
-            kstrcat(line, "  (");
+            kstrncat(line, "  (", sizeof(line));
             char sz[16];
             kitoa((int64_t)child->size, sz);
-            kstrcat(line, sz);
-            kstrcat(line, " B)");
+            kstrncat(line, sz, sizeof(line));
+            kstrncat(line, " B)", sizeof(line));
         }
         term_println(t, line);
     }
@@ -224,6 +250,96 @@ static void cmd_touch(TermState* t, const char* name) {
     if (!name || !name[0]) { term_println(t, tr(STR_TERM_TOUCH_NEED_NAME)); return; }
     VfsNode* n = vfs_touch(vfs_cwd(), name);
     if (!n) term_println(t, tr(STR_TERM_TOUCH_FAILED));
+}
+
+// ---- run <arquivo.hexec> ----
+// Comando de teste da Fase 2 (loader de executáveis + processos
+// de usuário reais): carrega um arquivo HEXEC do VFS e cria um
+// processo para rodá-lo. O processo roda de forma assíncrona (o
+// scheduler decide quando escaloná-lo) — este comando só dispara a
+// criação, não espera o processo terminar nem mostra a saída dele
+// aqui no terminal (a saída de sys_write vai direto para o
+// framebuffer por enquanto, ver comentário em syscall.c sobre essa
+// limitação atual de não haver ainda uma "janela" dedicada por
+// processo). Só um processo de usuário pode existir por vez nesta
+// fase — ver comentário em hexec.h sobre por quê.
+// ---- Drena a saída de um processo rodando "dentro" deste terminal ----
+//
+// Chamada a cada frame do loop principal do terminal (ver o loop em
+// terminal_update/terminal_draw mais abaixo). Lê os bytes disponíveis
+// em t->running_process->stdout_ring (task_stdout_read, em task.c) e
+// os imprime como texto normal, quebrando em linhas nos '\n' — bytes
+// que ainda não formam uma linha completa ficam acumulados em
+// running_line_buf até o próximo dreno. Quando o processo sinaliza
+// has_exited, imprime a mensagem final com o código de saída e limpa
+// running_process (liberando este terminal para rodar outro "run" —
+// a task em si só é reciclada de verdade mais tarde pelo reaper
+// global, ver task_reap_zombies em gui/screens/desktop.cpp).
+static void term_update_running_process(TermState* t) {
+    task_t* proc = t->running_process;
+    if (!proc) return;
+
+    uint8_t chunk[64];
+    uint64_t n;
+    while ((n = task_stdout_read(proc, chunk, sizeof(chunk))) > 0) {
+        for (uint64_t i = 0; i < n; i++) {
+            char c = (char)chunk[i];
+            if (c == '\n' || t->running_line_len >= TERM_COLS) {
+                t->running_line_buf[t->running_line_len] = '\0';
+                term_println(t, t->running_line_buf);
+                t->running_line_len = 0;
+            } else {
+                t->running_line_buf[t->running_line_len++] = c;
+            }
+        }
+    }
+
+    if (proc->has_exited) {
+        // Imprime qualquer resto de linha parcial que não terminou
+        // com '\n' antes do processo sair — senão esses bytes finais
+        // ficariam silenciosamente perdidos.
+        if (t->running_line_len > 0) {
+            t->running_line_buf[t->running_line_len] = '\0';
+            term_println(t, t->running_line_buf);
+            t->running_line_len = 0;
+        }
+        char msg[64] = "[processo encerrado, codigo=";
+        char numbuf[24];
+        kuitoa(proc->exit_code, numbuf);
+        kstrcat(msg, numbuf);
+        kstrcat(msg, "]");
+        term_println(t, msg);
+
+        // Este terminal não é mais "dono" do processo — a task ainda
+        // existe (TASK_ZOMBIE) até o reaper global rodar, mas daqui
+        // para frente ninguém mais escreve em stdout_owner por conta
+        // deste terminal, então soltamos a referência.
+        proc->stdout_owner = NULL;
+        t->running_process = nullptr;
+    }
+}
+
+static void cmd_run(TermState* t, const char* name) {
+    if (!name || !name[0]) { term_println(t, "uso: run <arquivo.hexec>"); return; }
+    if (t->running_process) {
+        term_println(t, "run: ja ha um processo rodando neste terminal");
+        return;
+    }
+    VfsNode* node = vfs_resolve(vfs_cwd(), name);
+    if (!node) { term_println(t, "run: arquivo nao encontrado"); return; }
+    if (node->type == VFS_DIR) { term_println(t, "run: e um diretorio"); return; }
+
+    task_t* proc = process_create(name, node);
+    if (!proc) {
+        term_println(t, "run: falha ao criar processo (HEXEC invalido, sem memoria,");
+        term_println(t, "     tabela de tasks cheia, ou ja existe um processo de");
+        term_println(t, "     usuario rodando nesta fase — ver hexec.h)");
+        return;
+    }
+    proc->stdout_owner   = t;
+    t->running_process   = proc;
+    t->running_line_len  = 0;
+    term_println(t, "run: processo iniciado");
 }
 
 static void cmd_cat(TermState* t, const char* name) {
@@ -309,23 +425,29 @@ static void cmd_stat(TermState* t, const char* name) {
     VfsNode* node = vfs_resolve(vfs_cwd(), name);
     if (!node) { term_println(t, tr(STR_TERM_STAT_NOT_FOUND)); return; }
     char buf[TERM_COLS + 1];
-    kstrcpy(buf, tr(STR_TERM_STAT_NAME)); kstrcat(buf, node->name);
+    // kstrncat em todos os pontos abaixo (não kstrcat): nome de
+    // arquivo e, principalmente, o caminho absoluto (path[512]) têm
+    // tamanho imprevisível e `buf` tem só TERM_COLS+1 bytes — a
+    // concatenação sem limite era um estouro de pilha esperando
+    // acontecer, da mesma família do bug que travava o sistema ao
+    // executar um .hexec pelo explorador de arquivos.
+    kstrcpy(buf, tr(STR_TERM_STAT_NAME)); kstrncat(buf, node->name, sizeof(buf));
     term_println(t, buf);
     kstrcpy(buf, tr(STR_TERM_STAT_TYPE));
-    kstrcat(buf, node->type == VFS_DIR ? tr(STR_TERM_STAT_TYPE_DIR) : tr(STR_TERM_STAT_TYPE_FILE));
+    kstrncat(buf, node->type == VFS_DIR ? tr(STR_TERM_STAT_TYPE_DIR) : tr(STR_TERM_STAT_TYPE_FILE), sizeof(buf));
     term_println(t, buf);
     if (node->type == VFS_FILE) {
         char sz[24]; kitoa((int64_t)node->size, sz);
-        kstrcpy(buf, tr(STR_TERM_STAT_SIZE)); kstrcat(buf, sz); kstrcat(buf, " bytes");
+        kstrcpy(buf, tr(STR_TERM_STAT_SIZE)); kstrncat(buf, sz, sizeof(buf)); kstrncat(buf, " bytes", sizeof(buf));
         term_println(t, buf);
     } else {
         char cnt[24]; kitoa((int64_t)node->child_count, cnt);
-        kstrcpy(buf, tr(STR_TERM_STAT_ITEMS)); kstrcat(buf, cnt);
+        kstrcpy(buf, tr(STR_TERM_STAT_ITEMS)); kstrncat(buf, cnt, sizeof(buf));
         term_println(t, buf);
     }
     char path[512];
     vfs_path_of(node, path, sizeof(path));
-    kstrcpy(buf, tr(STR_TERM_STAT_PATH)); kstrcat(buf, path);
+    kstrcpy(buf, tr(STR_TERM_STAT_PATH)); kstrncat(buf, path, sizeof(buf));
     term_println(t, buf);
 }
 
@@ -386,6 +508,8 @@ static void term_execute(TermState* t, const char* input) {
         cmd_touch(t, args);
     } else if (kstrcmp(cmd, "cat") == 0) {
         cmd_cat(t, args);
+    } else if (kstrcmp(cmd, "run") == 0) {
+        cmd_run(t, args);
     } else if (kstrcmp(cmd, "write") == 0) {
         cmd_write(t, args);
     } else if (kstrcmp(cmd, "append") == 0) {
@@ -401,7 +525,10 @@ static void term_execute(TermState* t, const char* input) {
     } else {
         char buf[TERM_COLS + 1];
         kstrcpy(buf, tr(STR_TERM_CMD_NOT_FOUND));
-        kstrcat(buf, cmd);
+        // kstrncat: `cmd` vem direto da entrada do usuário, que pode
+        // ter até TERM_BUF_SIZE (256) bytes — não cabe garantidamente
+        // neste buffer de TERM_COLS+1.
+        kstrncat(buf, cmd, sizeof(buf));
         term_println(t, buf);
         term_println(t, tr(STR_TERM_CMD_NOT_FOUND_HINT));
     }
@@ -432,11 +559,37 @@ public:
         term_println(&m_state, "");
     }
 
+    ~TerminalWindow() override {
+        // Se um processo de usuário ainda estiver rodando "dentro"
+        // deste terminal quando a janela é fechada, ele fica sem
+        // dono de stdout — desassociamos aqui para não deixar
+        // proc->stdout_owner como um ponteiro pendurado apontando
+        // para esta TermState prestes a ser destruída (use-after-free
+        // na próxima vez que sys_write tentasse gravar, ou pior, na
+        // próxima vez que outro terminal também fosse fechado e essa
+        // região de memória fosse reaproveitada para outra coisa). O
+        // processo em si continua rodando até terminar sozinho ou ser
+        // colhido pelo reaper — esta fase ainda não tem uma forma de
+        // "matar" um processo de fora, isso fica para depois.
+        if (m_state.running_process) {
+            m_state.running_process->stdout_owner = nullptr;
+            m_state.running_process = nullptr;
+        }
+    }
+
     void draw(int32_t ox, int32_t oy) override {
         Window::draw(ox, oy);
         if (!active || minimized) return;
 
         TermState* t = &m_state;
+        term_update_running_process(t); // drena stdout do processo,
+                                          // se houver um rodando —
+                                          // feito aqui porque draw()
+                                          // já roda a cada frame do
+                                          // desktop, dando ao processo
+                                          // uma cadência de atualização
+                                          // visível sem precisar de um
+                                          // timer dedicado.
         Rect content = content_area_absolute();
         int bx = content.x + PAD;
         int by = content.y + PAD;
@@ -572,7 +725,12 @@ public:
             term_build_prompt(prompt, sizeof(prompt));
             char echo_line[TERM_COLS + PROMPT_MAX + 2];
             kstrcpy(echo_line, prompt);
-            kstrcat(echo_line, t->input);
+            // Este buffer está dimensionado para caber prompt+input,
+            // mas usamos a versão com limite por consistência com o
+            // resto do arquivo e como defesa em profundidade caso
+            // PROMPT_MAX ou TERM_BUF_SIZE mudem no futuro sem que
+            // alguém revise este cálculo.
+            kstrncat(echo_line, t->input, sizeof(echo_line));
             term_println(t, echo_line);
             term_execute(t, t->input);
             kmemset(t->input, 0, TERM_BUF_SIZE);
@@ -621,7 +779,59 @@ Window* terminal_create(int32_t x, int32_t y) {
     uint32_t h = FONT_H * (TERM_ROWS + 1) + (uint32_t)(Window::BORDER + Window::TITLE_BAR_H + 1 + PAD*2);
 
     TerminalWindow* win = new TerminalWindow(x, y, w, h, "Terminal -- HAOS Shell v1.2");
-    wm_register(win);
+    if (!win) {
+        // Heap esgotada/fragmentada demais para alocar outro
+        // TerminalWindow. Com -fno-exceptions, `new` devolve nullptr
+        // em vez de lançar std::bad_alloc — se não checarmos aqui, o
+        // construtor rodaria escrevendo no endereço 0 e derrubaria o
+        // sistema inteiro. Falhar silenciosamente (sem abrir a janela)
+        // é muito melhor que travar tudo; quem chama propaga o erro.
+        return nullptr;
+    }
+    if (!wm_register(win)) {
+        // Sem slot livre no WM (MAX_WINDOWS janelas já abertas).
+        // ANTES desta checagem, a janela recém-criada com `new` ficava
+        // órfã: nunca registrada, nunca deletada, e ainda assim
+        // devolvida ao chamador como se tivesse dado certo — vazando
+        // memória e, pior, virando dona do stdout de um processo que
+        // jamais seria desenhado nem atualizado (o que travava o
+        // processo como zumbi para sempre, já que o reaper não colhe
+        // uma task cujo stdout_owner ainda é não-nulo).
+        delete win;
+        return nullptr;
+    }
+    return win;
+}
+
+Window* terminal_create_and_run(int32_t x, int32_t y, const char* hexec_path) {
+    Window* win = terminal_create(x, y);
+    if (!win) return nullptr; // sem slot de janela livre — ver terminal_create
+    TerminalWindow* tw = static_cast<TerminalWindow*>(win);
+    // Chama cmd_run diretamente (mesma função usada quando o usuário
+    // digita "run <arquivo>" no prompt) em vez de duplicar a lógica
+    // de criação de processo aqui — o explorador de arquivos delega
+    // toda a execução ao terminal, como pedido: "rodar" um .hexec
+    // pelo explorador não deveria ter um caminho de execução
+    // diferente do comando run, só uma forma mais rápida de chegar
+    // até ele.
+    // Eco visual do comando disparado, para deixar claro ao usuário
+    // que isto equivale a ter digitado o comando manualmente.
+    //
+    // Usa kstrncat (com limite) e não kstrcat: `hexec_path` vem do
+    // explorador de arquivos como um CAMINHO ABSOLUTO de até 512
+    // bytes (ver file_manager.cpp), enquanto este buffer tem só
+    // TERM_COLS+1 (81) bytes. Concatenar sem limite aqui estourava a
+    // pilha da task da GUI — causando travamentos erráticos ao
+    // executar um .hexec pelo explorador (às vezes uma pausa longa,
+    // às vezes congelamento total, dependendo do que fosse corrompido
+    // na pilha). Pelo terminal o bug não aparecia, porque ali o
+    // usuário digita um caminho curto e relativo.
+    char echo[TERM_COLS + 1];
+    kstrcpy(echo, "> run ");
+    kstrncat(echo, hexec_path, sizeof(echo));
+    term_println(&tw->m_state, echo);
+
+    cmd_run(&tw->m_state, hexec_path);
     return win;
 }
 

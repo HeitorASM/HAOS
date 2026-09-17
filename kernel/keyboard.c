@@ -11,7 +11,17 @@ static const uint8_t sc_normal[128] = {
     0,0,0,0,0,0,0,0,0,0, // F1-F10
     0,0,  // Num lock, Scroll lock
     '7','8','9','-','4','5','6','+','1','2','3','0','.', 0,0,0,
-    0,0   // F11, F12
+    0,0,   // F11, F12
+    [0x56] = '\\', // ABNT2: tecla extra "\|" entre Shift esquerdo e Z
+                    // (ausente no layout US — sem isso, essa tecla física
+                    // não produzia caractere nenhum em teclados ABNT2).
+    [0x73] = '/',  // ABNT2: tecla extra "/?" perto do Enter (é a tecla
+                    // física onde a maioria dos usuários brasileiros
+                    // espera digitar "/" — o scancode 0x35, que já
+                    // mapeávamos para '/', corresponde a uma posição
+                    // física DIFERENTE no ABNT2 e pode não estar
+                    // acessível dependendo do teclado real ou do
+                    // mapeamento que o VirtualBox repassa).
 };
 
 static const uint8_t sc_shift[128] = {
@@ -19,7 +29,9 @@ static const uint8_t sc_shift[128] = {
     '\t','Q','W','E','R','T','Y','U','I','O','P','{','}','\n',
     0,   'A','S','D','F','G','H','J','K','L',':','"','~',
     0,   '|','Z','X','C','V','B','N','M','<','>','?', 0,
-    '*', 0,  ' ', 0
+    '*', 0,  ' ', 0,
+    [0x56] = '|',  // ABNT2, mesma tecla acima, com Shift
+    [0x73] = '?',  // ABNT2, mesma tecla acima, com Shift
 };
 
 // Códigos especiais para setas e atalhos: definidos em keyboard.h

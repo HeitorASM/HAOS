@@ -2,6 +2,7 @@
 #include "../kernel/memory.h"
 #include "haosfs.h"
 #include "../drivers/ata_pio.h"
+#include "../kernel/generated/hello_hexec_data.h"
 // Sistema de arquivos virtual que roda na RAM do OS.
 // Arquivos crescem dinamicamente (dobra de capacidade) até VFS_FILE_MAX,
 // e diretórios suportam até VFS_MAX_CHILDREN itens.
@@ -52,6 +53,25 @@ static void vfs_create_defaults(void) {
     VfsNode* tmp  = vfs_mkdir(g_root, "tmp");
 
     (void)bin; (void)tmp;
+
+    // /bin/hello.hexec — executável de exemplo, escrito em C de
+    // verdade (ver examples/hello_c/main.c) usando a libc mínima do
+    // HAOS (libc/), compilado e empacotado via libc/mkhexec.py.
+    // Este header (kernel/generated/hello_hexec_data.h) é um
+    // artefato de BUILD gerado a partir daquele fonte — nunca edite
+    // este .h manualmente; edite examples/hello_c/main.c e regenere
+    // (ver libc/README.md para o passo a passo completo).
+    // Escrito bytes-a-bytes via vfs_ensure_capacity+kmemcpy (não
+    // vfs_write, que corta no primeiro '\0' — inaceitável para
+    // código de máquina binário, que naturalmente contém bytes zero
+    // no meio). Rode com "run hello.hexec" no terminal.
+    {
+        VfsNode* hello = vfs_touch(bin, "hello.hexec");
+        if (hello && vfs_ensure_capacity(hello, HELLO_HEXEC_SIZE)) {
+            kmemcpy(hello->data, hello_hexec_data, HELLO_HEXEC_SIZE);
+            hello->size = HELLO_HEXEC_SIZE;
+        }
+    }
 
     // /home/user
     VfsNode* user = vfs_mkdir(home, "user");
@@ -270,12 +290,21 @@ void vfs_path_of(VfsNode* node, char* buf, size_t bufsz) {
     while (cur && cur != g_root) {
         char seg[VFS_NAME_MAX + 2];
         seg[0] = '/';
-        kstrcpy(seg + 1, cur->name);
-        // Prepend seg to tmp
+        kstrncpy(seg + 1, cur->name, sizeof(seg) - 1);
+        seg[sizeof(seg) - 1] = '\0';
+        // Prepend seg to tmp — com limite em ambas as cópias: uma
+        // hierarquia de diretórios suficientemente profunda faria o
+        // caminho acumulado passar de 512 bytes, estourando `tmp` (e
+        // `old`) sem nenhum aviso. Com kstrncat o caminho é truncado
+        // em vez de corromper a pilha; truncar é o comportamento
+        // correto aqui, já que quem chama passa um `bufsz` próprio e
+        // já espera um resultado possivelmente cortado.
         char old[512];
-        kstrcpy(old, tmp);
-        kstrcpy(tmp, seg);
-        kstrcat(tmp, old);
+        kstrncpy(old, tmp, sizeof(old));
+        old[sizeof(old) - 1] = '\0';
+        kstrncpy(tmp, seg, sizeof(tmp));
+        tmp[sizeof(tmp) - 1] = '\0';
+        kstrncat(tmp, old, sizeof(tmp));
         cur = cur->parent;
     }
     if (!tmp[0]) { tmp[0] = '/'; tmp[1] = 0; }

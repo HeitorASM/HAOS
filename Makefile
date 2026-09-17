@@ -5,6 +5,10 @@ LD       = $(CROSS)-ld
 NASM     = nasm
 GRUB     = grub-mkrescue
 
+# ── Flags extras opcionais para builds de debug/experimentação ───────────
+# Ex.: make all EXTRA_FLAGS=-DALGUMA_FLAG_DE_DEBUG
+EXTRA_FLAGS ?=
+
 # ── Auto-detecta wallpapers ───────────────────────────────────────────────
 WALLPAPER_SRCS := $(wildcard assets/wallpapers/wallpaper_*.c)
 WALLPAPER_OBJS := $(WALLPAPER_SRCS:.c=.o)
@@ -26,7 +30,8 @@ COMMON_FLAGS = \
     -I. -Ikernel -Idrivers -Igui -Ifs               \
     -Igui/screens -Igui/elements -Igui/apps         \
     -m64                                            \
-    $(WALLPAPER_FLAG)
+    $(WALLPAPER_FLAG)                               \
+    $(EXTRA_FLAGS)
 
 # ── Flags exclusivas de C ────────────────────────────────────────────────
 CFLAGS = $(COMMON_FLAGS) \
@@ -50,7 +55,8 @@ ASM_SRCS = boot/boot.asm          \
            kernel/idt_asm.asm     \
            kernel/isr_asm.asm     \
            kernel/usermode.asm    \
-           kernel/syscall_asm.asm
+           kernel/syscall_asm.asm \
+           kernel/task_switch.asm
 
 # ── Fontes C ──────────────────────────────────────────────────────────────
 C_SRCS   = kernel/kernel.c        \
@@ -60,6 +66,9 @@ C_SRCS   = kernel/kernel.c        \
            kernel/syscall.c       \
            kernel/pic.c           \
            kernel/pit.c           \
+           kernel/task.c          \
+           kernel/scheduler.c     \
+           kernel/process.c       \
            kernel/keyboard.c      \
            kernel/lang.c          \
            drivers/fb.c           \
