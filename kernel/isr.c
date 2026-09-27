@@ -159,7 +159,7 @@ static void isr_panic_screen(regs_t* r) {
         if (task_addr_is_guard_page(fault_addr, task_name)) {
             fb_draw_string(30, s_panic_y, "Diagnostico:", 0xFFCC66, 0x1A0000, false);
             char msg[80];
-            kstrcpy(msg, "STACK OVERFLOW na kernel thread \"");
+            kstrcpy(msg, "STACK OVERFLOW (kernel ou usuario) em \"");
             // kstrncat (com limite): embora task_name seja limitado a
             // TASK_NAME_MAX, este é código de PANIC HANDLER — roda
             // quando o sistema já está em estado degradado, possivelmente

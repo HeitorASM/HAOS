@@ -1,5 +1,15 @@
 # libc/Makefile — biblioteca C mínima e independente para o HAOS
 #
+# -mcmodel=large é OBRIGATÓRIO: HEXEC_LOAD_ADDR (0x300000000) fica
+# acima de 4GB, e o modelo de código padrão do GCC ("small") só gera
+# relocations de 32 bits para símbolos globais — qualquer variável
+# em .data/.bss falha ao linkar ("relocation truncated to fit") sem
+# esta flag. Isso vale tanto para a libc quanto para QUALQUER
+# programa de usuário linkado contra libc/hexec.ld — sempre inclua
+# -mcmodel=large no CFLAGS de qualquer novo programa (ver
+# examples/*/Makefile ou o comando manual documentado em
+# libc/README.md).
+#
 # Produz duas coisas:
 #   build/crt0.o  — objeto do ponto de entrada, linkado
 #                   SEPARADAMENTE por cada programa (não entra em
@@ -26,6 +36,7 @@ BUILD_DIR = build
 CFLAGS = \
     -ffreestanding -fno-stack-protector -fno-pic \
     -mno-red-zone -mno-mmx -mno-sse -mno-sse2    \
+    -mcmodel=large                                \
     -nostdlib -nodefaultlibs                     \
     -O2 -Wall -Wextra                            \
     -std=c11                                     \
@@ -40,7 +51,13 @@ SYSCALL_ASM_SRC = src/syscall/syscall.asm
 
 C_SRCS = src/unistd/write.c   \
          src/unistd/exit.c    \
+         src/unistd/sbrk.c    \
+         src/unistd/open.c    \
+         src/unistd/read.c    \
+         src/unistd/close.c   \
          src/stdlib/exit.c    \
+         src/stdlib/malloc.c  \
+         src/stdio/printf.c   \
          src/string/memcpy.c  \
          src/string/memset.c  \
          src/string/memmove.c \

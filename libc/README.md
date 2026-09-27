@@ -1,31 +1,42 @@
 # libc/ — biblioteca C mínima do HAOS
 
-Em vez de escrever programas de teste inteiramente em Assembly ou progrmas imbutidos
-no OS chamando `syscall` na mão, agora
- é possível escrever programas HEXEC em **C de verdade**,
+Substitui a antiga pasta `userland/` (removida). Em vez de escrever
+programas de teste inteiramente em Assembly chamando `syscall` na
+mão, agora é possível escrever programas HEXEC em **C de verdade**,
 usando esta libc mínima e freestanding.
 
 ## O que já existe
 
-- **`unistd.h`**: `write()`, `_exit()`
-- **`stdlib.h`**: `exit()`
+- **`unistd.h`**: `write()`, `_exit()`, `sbrk()`, `open()`, `read()`, `close()`
+- **`stdlib.h`**: `exit()`, `malloc()`, `free()`, `realloc()`
 - **`string.h`**: `memcpy`, `memset`, `memmove`, `memcmp`, `strlen`,
   `strcpy`, `strncpy`, `strcat`, `strcmp`, `strncmp`
-- **`stdio.h`**: vazio por enquanto (stub) — `printf`/`puts` ficam
-  para uma próxima iteração, quando fizer sentido investir num
-  formatador de string
+- **`stdio.h`**: `printf()`, `vprintf()`, `snprintf()`, `vsnprintf()`, `puts()`
+  — suporta `%d %i %u %x %X %s %c %p %%`, largura e zero-padding
+  (`%5d`, `%04x`); NÃO suporta ponto flutuante (`%f`) nem
+  modificadores de tamanho (`%ld`) — ver comentário completo em
+  `include/stdio.h`
+- **argc/argv**: `main(int argc, char** argv)` — o loader (`process_create`)
+  monta os argumentos na pilha de usuário antes de saltar para
+  `_start`, seguindo a mesma convenção do `_start` do Linux x86_64;
+  o comando `run` do terminal aceita `run programa.hexec arg1 arg2`
 
 ## O que NÃO existe ainda
 
-- `malloc`/`free` — o kernel ainda não tem uma syscall de
-  gerenciamento de memória de usuário (sbrk/mmap); até lá, um
-  programa HEXEC só tem a memória que o loader já mapeou
-  (código+dados+bss+pilha)
-- `argc`/`argv` — o loader HEXEC não passa argumentos de linha de
-  comando ainda (ver limitação documentada em `src/crt/crt0.asm`)
-- Múltiplos arquivos abertos / descritores de arquivo — `write()`
-  sempre vai para o stdout implícito do processo (redirecionado
-  para o terminal que o lançou)
+- Múltiplos processos filhos (`fork`/`spawn`) — um processo não pode
+  criar outro processo
+- Descritores de arquivo padrão (stdin/stdout/stderr como fds 0/1/2)
+  — `write()` sempre vai para o canal de stdout implícito do
+  processo (redirecionado para o terminal que o lançou), não para um
+  "fd 1" de verdade; `open()`/`read()`/`close()` só cobrem arquivos
+  abertos explicitamente pelo programa
+- Escrita em arquivo via syscall — `open()` só suporta leitura;
+  criar/escrever/truncar um arquivo continua sendo uma operação
+  exclusiva do kernel/GUI (ex.: o editor de texto usa `vfs_write`
+  diretamente, não uma syscall)
+- Diretório de trabalho por processo — `open()` sempre resolve a
+  partir da raiz do VFS; caminhos relativos não funcionam a partir
+  de um programa (só no terminal, que tem seu próprio `cwd`)
 
 ## Como compilar a libc
 

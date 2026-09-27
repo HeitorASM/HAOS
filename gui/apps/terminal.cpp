@@ -320,20 +320,60 @@ static void term_update_running_process(TermState* t) {
 }
 
 static void cmd_run(TermState* t, const char* name) {
-    if (!name || !name[0]) { term_println(t, "uso: run <arquivo.hexec>"); return; }
+    if (!name || !name[0]) { term_println(t, "uso: run <arquivo.hexec> [args...]"); return; }
     if (t->running_process) {
         term_println(t, "run: ja ha um processo rodando neste terminal");
         return;
     }
-    VfsNode* node = vfs_resolve(vfs_cwd(), name);
+
+    // Separa o nome do arquivo (primeiro token) do resto da linha
+    // (argumentos a repassar para o processo). `name` aqui é tudo
+    // que veio depois de "run " no prompt — pode conter múltiplos
+    // tokens separados por espaço, ex.: "programa.hexec arg1 arg2".
+    char filename[TERM_COLS + 1];
+    int fi = 0;
+    while (name[fi] && name[fi] != ' ' && fi < TERM_COLS) {
+        filename[fi] = name[fi];
+        fi++;
+    }
+    filename[fi] = '\0';
+    const char* rest = name + fi;
+    while (*rest == ' ') rest++; // pula espaços entre o nome do
+                                   // arquivo e o primeiro argumento
+
+    VfsNode* node = vfs_resolve(vfs_cwd(), filename);
     if (!node) { term_println(t, "run: arquivo nao encontrado"); return; }
     if (node->type == VFS_DIR) { term_println(t, "run: e um diretorio"); return; }
 
-    task_t* proc = process_create(name, node);
+    // Monta argv_str: argv[0] é sempre o nome do arquivo (convenção
+    // Unix — o próprio programa recebe seu nome como primeiro
+    // argumento), seguido de cada token do restante da linha,
+    // cada um terminado em '\0'.
+    char argv_str[TERM_COLS + 1];
+    uint64_t argv_len = 0;
+    {
+        uint64_t flen = kstrlen(filename);
+        kmemcpy(argv_str, filename, flen);
+        argv_str[flen] = '\0';
+        argv_len = flen + 1;
+
+        const char* p = rest;
+        while (*p && argv_len < sizeof(argv_str) - 1) {
+            uint64_t start = argv_len;
+            while (*p && *p != ' ' && argv_len < sizeof(argv_str) - 1) {
+                argv_str[argv_len++] = *p++;
+            }
+            if (argv_len > start) {
+                argv_str[argv_len++] = '\0';
+            }
+            while (*p == ' ') p++;
+        }
+    }
+
+    task_t* proc = process_create(filename, node, argv_str, argv_len);
     if (!proc) {
         term_println(t, "run: falha ao criar processo (HEXEC invalido, sem memoria,");
-        term_println(t, "     tabela de tasks cheia, ou ja existe um processo de");
-        term_println(t, "     usuario rodando nesta fase — ver hexec.h)");
+        term_println(t, "     ou tabela de tasks cheia)");
         return;
     }
     proc->stdout_owner   = t;

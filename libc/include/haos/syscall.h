@@ -27,6 +27,10 @@ extern "C" {
 
 #define SYS_WRITE  0
 #define SYS_EXIT   1
+#define SYS_SBRK   2
+#define SYS_OPEN   3
+#define SYS_READ   4
+#define SYS_CLOSE  5
 
 // Syscall crua de até 5 argumentos — usada internamente pelos
 // wrappers de mais alto nível (write(), _exit(), ver unistd.h).

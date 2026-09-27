@@ -3,6 +3,8 @@
 #include "haosfs.h"
 #include "../drivers/ata_pio.h"
 #include "../kernel/generated/hello_hexec_data.h"
+#include "../kernel/generated/hello_data_hexec_data.h"
+#include "../kernel/generated/hello_full_hexec_data.h"
 // Sistema de arquivos virtual que roda na RAM do OS.
 // Arquivos crescem dinamicamente (dobra de capacidade) até VFS_FILE_MAX,
 // e diretórios suportam até VFS_MAX_CHILDREN itens.
@@ -70,6 +72,32 @@ static void vfs_create_defaults(void) {
         if (hello && vfs_ensure_capacity(hello, HELLO_HEXEC_SIZE)) {
             kmemcpy(hello->data, hello_hexec_data, HELLO_HEXEC_SIZE);
             hello->size = HELLO_HEXEC_SIZE;
+        }
+    }
+
+    // /bin/hello_data.hexec — segundo exemplo, validando HEXEC v2 de
+    // ponta a ponta: usa uma variável .data (inicializada, valor != 0)
+    // e uma .bss (não inicializada) — ambas mapeadas RW+NX pelo
+    // loader, em páginas SEPARADAS de .text (RX). Ver
+    // examples/hello_data/main.c. Rode com "run hello_data.hexec".
+    {
+        VfsNode* hello_data = vfs_touch(bin, "hello_data.hexec");
+        if (hello_data && vfs_ensure_capacity(hello_data, HELLO_DATA_HEXEC_SIZE)) {
+            kmemcpy(hello_data->data, hello_data_hexec_data, HELLO_DATA_HEXEC_SIZE);
+            hello_data->size = HELLO_DATA_HEXEC_SIZE;
+        }
+    }
+
+    // /bin/hello_full.hexec — terceiro exemplo, testando as syscalls
+    // novas de uma vez: argc/argv (passe argumentos com
+    // "run hello_full.hexec foo bar"), malloc/free (sys_sbrk), e
+    // open/read/close (lê o próprio /bin/hello.hexec e confere o
+    // magic HXEC). Ver examples/hello_full/main.c.
+    {
+        VfsNode* hello_full = vfs_touch(bin, "hello_full.hexec");
+        if (hello_full && vfs_ensure_capacity(hello_full, HELLO_FULL_HEXEC_SIZE)) {
+            kmemcpy(hello_full->data, hello_full_hexec_data, HELLO_FULL_HEXEC_SIZE);
+            hello_full->size = HELLO_FULL_HEXEC_SIZE;
         }
     }
 

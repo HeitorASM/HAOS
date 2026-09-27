@@ -52,6 +52,20 @@ extern "C" {
                                           // nesta etapa (array estático,
                                           // sem alocação dinâmica da
                                           // tabela de tasks).
+#define TASK_MAX_OPEN_FILES  8           // arquivos abertos simultaneamente
+                                          // por processo — ver fd_table
+                                          // abaixo. Suficiente para um
+                                          // programa simples; aumentar se
+                                          // algum programa real precisar
+                                          // de mais.
+
+// Forward declaration — task.h não inclui fs/vfs.h de propósito, para
+// não criar uma dependência do subsistema de tasks (kernel/) sobre o
+// VFS (fs/): task_t só guarda PONTEIROS opacos para VfsNode (ver
+// fd_table), nunca acessa seus campos internos diretamente. Quem
+// precisa dos detalhes de VfsNode (kernel/syscall.c, ao implementar
+// sys_open/sys_read/sys_close) inclui fs/vfs.h por conta própria.
+struct VfsNode;
 
 typedef enum {
     TASK_UNUSED = 0,   // slot livre na tabela, pronto para reuso
@@ -150,6 +164,54 @@ typedef struct task {
     // processo de usuário por vez" documentada em hexec.h deixa de
     // ser necessária a partir desta task ter isso preenchido.
     address_space_t* address_space;
+
+    // ---- Heap de usuário (sbrk) — base do malloc/free da libc ----
+    // Região de memória que cresce SOB DEMANDA via sys_sbrk(), à
+    // semelhança de brk()/sbrk() do Unix clássico: o kernel só
+    // reserva o ENDEREÇO inicial aqui (escolhido logo após a pilha
+    // de usuário, dentro da mesma entrada de PDPT exclusiva do
+    // processo — ver comentário em process.c sobre essa dependência
+    // com paging_create_address_space), e mapeia páginas físicas
+    // conforme sys_sbrk pede para crescer. malloc()/free() na libc
+    // (ver libc/src/stdlib/malloc.c) implementam um alocador simples
+    // por cima desse espaço bruto — o kernel não sabe nada sobre
+    // "blocos alocados", só sobre "até onde a heap deste processo já
+    // foi mapeada".
+    uint64_t        heap_base;              // endereço virtual fixo
+                                             // de início da heap
+                                             // (constante por
+                                             // processo, calculado em
+                                             // process_create).
+    uint64_t        heap_current;           // até onde a heap já foi
+                                             // efetivamente mapeada —
+                                             // sys_sbrk(0) retorna
+                                             // isso; incrementos
+                                             // mapeiam mais páginas a
+                                             // partir daqui.
+    uint64_t        heap_limit;             // limite máximo que a
+                                             // heap pode crescer
+                                             // (previne um processo
+                                             // consumir toda a
+                                             // memória física do
+                                             // sistema por engano ou
+                                             // de propósito).
+
+    // ---- Descritores de arquivo (Fase de syscalls de I/O) ----
+    // Tabela pequena e de tamanho fixo — suficiente para um programa
+    // simples abrir alguns arquivos por vez; não há necessidade de
+    // crescer dinamicamente nesta fase. Índice 0 é deliberadamente
+    // deixado vazio (NULL) nesta versão: não existem ainda
+    // descritores 0/1/2 (stdin/stdout/stderr) no sentido POSIX — a
+    // saída de sys_write vai sempre para o canal de stdout do
+    // processo (stdout_ring, abaixo), não para um "fd 1" de verdade.
+    // Isso é uma simplificação deliberada; unificar com um esquema
+    // de FDs completo (stdin/stdout/stderr como fds 0/1/2 de
+    // verdade) é uma evolução futura razoável.
+    struct VfsNode* fd_table[TASK_MAX_OPEN_FILES];
+    uint32_t        fd_offset[TASK_MAX_OPEN_FILES]; // posição de leitura
+                                                       // atual de cada fd
+                                                       // aberto (sys_read
+                                                       // avança isso).
 
     // ---- Canal de saída (stdout) para o terminal que o lançou ----
     // Substitui a abordagem anterior de sys_write desenhar direto no

@@ -21,6 +21,8 @@
 #include "memory.h"
 #include "paging.h"
 #include "task.h"
+#include "process.h"
+#include "../fs/vfs.h"
 
 extern void syscall_entry(void); // definido em syscall_asm.asm
 
@@ -92,13 +94,16 @@ static bool validate_user_range(uint64_t addr, uint64_t len) {
     uint64_t end_page    = (addr + len - 1) & ~(PAGE_SIZE_4K - 1);
 
     for (uint64_t page = start_page; page <= end_page; page += PAGE_SIZE_4K) {
-        uint64_t phys;
-        if (!paging_translate(page, &phys)) return false; // não mapeada
-        // TODO: quando paging_translate expuser as flags da entrada
-        // (não só o endereço físico), checar aqui também o bit
-        // PAGE_USER — por ora, qualquer página mapeada é aceita,
-        // o que é suficiente para o teste desta etapa mas deve ser
-        // reforçado antes de expor isso a processos não-confiáveis.
+        // paging_is_user_page checa DUAS coisas de uma vez: (a) a
+        // página está mapeada, e (b) foi mapeada com PAGE_USER — ou
+        // seja, pertence de fato ao espaço de endereço deste
+        // processo, não é uma página de KERNEL que por coincidência
+        // tem uma tradução válida (ex.: a própria pilha de kernel da
+        // task, ou o código do kernel). Sem o item (b), um processo
+        // malicioso poderia passar o endereço de alguma estrutura de
+        // kernel conhecida para sys_write/sys_read e usar a syscall
+        // como uma forma de ler/vazar memória de kernel arbitrária.
+        if (!paging_is_user_page(page)) return false;
     }
     return true;
 }
@@ -155,6 +160,174 @@ static uint64_t sys_write(uint64_t user_ptr, uint64_t len) {
 // primeiro resolver isso (dar a cada task sua própria pilha de
 // syscall, não uma global) — não fazer isso silenciosamente
 // corromperia o estado de outras tasks.
+// ---- SYS_SBRK(increment) ----
+// Cresce (ou encolhe, se increment for negativo) a heap de usuário
+// do processo atual em `increment` bytes, mapeando/desmapeando
+// páginas físicas conforme necessário. Retorna o endereço do TOPO
+// ANTERIOR da heap (convenção clássica de sbrk() Unix — o chamador
+// usa esse valor como o início do novo bloco), ou (uint64_t)-1 em
+// erro (heap_limit excedido, ou tentativa de encolher além de
+// heap_base).
+//
+// increment é tratado em unidades de PÁGINA INTEIRA (arredondado
+// para cima) — a libc (malloc) é quem gerencia sub-alocações dentro
+// de uma página; o kernel só sabe mapear/desmapear páginas inteiras.
+static uint64_t sys_sbrk(int64_t increment) {
+    task_t* t = task_current();
+    if (!t->is_user_task || t->heap_base == 0) {
+        // Chamado por uma task sem heap configurada (não deveria
+        // acontecer para processos de usuário reais, mas nunca
+        // confiamos cegamente vindo de Ring 3).
+        return (uint64_t)-1;
+    }
+
+    uint64_t old_top = t->heap_current;
+
+    if (increment == 0) {
+        return old_top; // sys_sbrk(0) é o idioma clássico para "só
+                          // me diga onde a heap está agora, sem
+                          // crescer nada" — usado por malloc() para
+                          // inicializar seu estado na primeira
+                          // chamada.
+    }
+
+    if (increment > 0) {
+        uint64_t grow_bytes = (uint64_t)increment;
+        uint64_t new_top = old_top + grow_bytes;
+        if (new_top > t->heap_limit || new_top < old_top /* overflow */) {
+            return (uint64_t)-1; // cresceria além do limite permitido
+        }
+
+        uint64_t pages = pages_needed_for(grow_bytes);
+        // map_region_in mapeia a partir de um endereço ALINHADO A
+        // PÁGINA — old_top já é sempre alinhado, porque só avançamos
+        // heap_current em múltiplos de PAGE_SIZE_4K (ver abaixo,
+        // "avança em páginas inteiras").
+        if (!map_region_in(t->address_space, old_top, pages,
+                            PAGE_WRITABLE | PAGE_USER | PAGE_NO_EXEC, NULL, 0)) {
+            return (uint64_t)-1; // sem memória física suficiente
+        }
+        t->heap_current = old_top + pages * PAGE_SIZE_4K; // avança em
+                                                             // páginas
+                                                             // inteiras,
+                                                             // não só
+                                                             // grow_bytes
+                                                             // — mantém
+                                                             // heap_current
+                                                             // sempre
+                                                             // alinhado.
+        return old_top;
+    }
+
+    // increment < 0: encolhe a heap, desmapeando páginas do topo.
+    uint64_t shrink_bytes = (uint64_t)(-increment);
+    if (shrink_bytes > (old_top - t->heap_base)) {
+        return (uint64_t)-1; // encolheria além do início da heap
+    }
+    uint64_t pages = pages_needed_for(shrink_bytes);
+    uint64_t new_top = old_top - pages * PAGE_SIZE_4K;
+    task_free_mapped_pages(t->address_space, new_top, pages);
+    t->heap_current = new_top;
+    return old_top;
+}
+
+// ---- Descritores de arquivo: SYS_OPEN / SYS_READ / SYS_CLOSE ----
+//
+// Implementação mínima e só-leitura nesta fase: um processo pode
+// abrir um arquivo existente do VFS e lê-lo sequencialmente, mas não
+// pode criar, escrever ou truncar um arquivo via syscall ainda (isso
+// continua sendo uma operação exclusiva do kernel/GUI, ex.: o editor
+// de texto usando vfs_write diretamente). Adicionar SYS_WRITE_FILE/
+// SYS_CREATE fica para quando um programa de usuário realmente
+// precisar disso.
+#define SYS_OPEN_MAX_PATH  256
+
+static int find_free_fd(task_t* t) {
+    for (int fd = 0; fd < TASK_MAX_OPEN_FILES; fd++) {
+        if (t->fd_table[fd] == NULL) return fd;
+    }
+    return -1;
+}
+
+static uint64_t sys_open(uint64_t user_path_ptr, uint64_t path_len) {
+    if (path_len == 0 || path_len >= SYS_OPEN_MAX_PATH) return (uint64_t)-1;
+    if (!validate_user_range(user_path_ptr, path_len)) return (uint64_t)-1;
+
+    char path[SYS_OPEN_MAX_PATH];
+    kmemcpy(path, (const void*)user_path_ptr, path_len);
+    path[path_len] = '\0';
+
+    task_t* t = task_current();
+    int fd = find_free_fd(t);
+    if (fd < 0) return (uint64_t)-1; // tabela de FDs deste processo cheia
+
+    // Resolve relativo à RAIZ do VFS, não ao cwd do terminal que
+    // lançou o processo — um processo de usuário não tem noção de
+    // "diretório de trabalho" nesta fase (isso exigiria mais uma
+    // syscall, tipo chdir, e mais estado em task_t). Programas devem
+    // usar caminhos absolutos por enquanto.
+    VfsNode* node = vfs_resolve(vfs_root(), path);
+    if (!node || node->type != VFS_FILE) return (uint64_t)-1;
+
+    t->fd_table[fd]  = node;
+    t->fd_offset[fd] = 0;
+    return (uint64_t)fd;
+}
+
+static uint64_t sys_read(uint64_t fd, uint64_t user_buf_ptr, uint64_t count) {
+    task_t* t = task_current();
+    if (fd >= TASK_MAX_OPEN_FILES || t->fd_table[fd] == NULL) return (uint64_t)-1;
+
+    // SYS_READ_MAX_LEN era 4096 (uma página inteira) NA PILHA DE
+    // KERNEL desta task — que tem só TASK_STACK_SIZE (16KB) no
+    // total, guard page incluída. Um buffer tão grande numa única
+    // função, somado ao resto da cadeia de chamadas até aqui
+    // (syscall_entry -> syscall_dispatch -> sys_read), deixava pouca
+    // margem antes de bater na guard page em cenários com mais
+    // frames na pilha do que uma chamada isolada de teste sugere.
+    // Reduzido para 512 (mesma ordem de grandeza do buffer usado por
+    // sys_write) e lendo em BLOCOS quando `count` pede mais que isso
+    // — mais chamadas de loop, mas cada uma com pilha previsível.
+    #define SYS_READ_MAX_LEN 512
+    if (!validate_user_range(user_buf_ptr, count)) return (uint64_t)-1;
+
+    VfsNode* node = t->fd_table[fd];
+    uint32_t offset = t->fd_offset[fd];
+    if (offset >= node->size) return 0; // fim de arquivo
+
+    uint32_t available = node->size - offset;
+    uint64_t total_to_copy = count < available ? count : available;
+
+    uint8_t buf[SYS_READ_MAX_LEN];
+    uint64_t copied = 0;
+    while (copied < total_to_copy) {
+        uint64_t chunk = total_to_copy - copied;
+        if (chunk > SYS_READ_MAX_LEN) chunk = SYS_READ_MAX_LEN;
+        kmemcpy(buf, node->data + offset + copied, chunk);
+        kmemcpy((void*)(user_buf_ptr + copied), buf, chunk);
+        copied += chunk;
+    }
+    // Cópia em duas etapas (kernel -> buf -> usuário) em vez de
+    // copiar direto node->data -> user_buf_ptr: mantém a mesma
+    // disciplina de "nunca escrever direto de uma fonte não validada
+    // para um destino de usuário sem um buffer intermediário
+    // limitado" usada em sys_write, mesmo aqui a fonte sendo
+    // confiável (dados do próprio VFS) — o que precisa de cautela é
+    // o TAMANHO copiado de cada vez nunca exceder SYS_READ_MAX_LEN.
+    uint64_t to_copy = total_to_copy;
+
+    t->fd_offset[fd] += (uint32_t)to_copy;
+    return to_copy;
+}
+
+static uint64_t sys_close(uint64_t fd) {
+    task_t* t = task_current();
+    if (fd >= TASK_MAX_OPEN_FILES || t->fd_table[fd] == NULL) return (uint64_t)-1;
+    t->fd_table[fd]  = NULL;
+    t->fd_offset[fd] = 0;
+    return 0;
+}
+
 static _Noreturn uint64_t sys_exit(uint64_t code) {
     task_t* t = task_current();
     // Marcado ANTES de task_exit(): o terminal dono (stdout_owner)
@@ -170,11 +343,17 @@ static _Noreturn uint64_t sys_exit(uint64_t code) {
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5) {
-    (void)a3; (void)a4; (void)a5; // não usados pelas syscalls atuais
+    (void)a4; (void)a5; // não usados pelas syscalls atuais (SYS_READ
+                          // usa até a3; nenhuma syscall hoje precisa
+                          // de mais que 3 argumentos)
 
     switch (num) {
         case SYS_WRITE: return sys_write(a1, a2);
         case SYS_EXIT:  return sys_exit(a1); // não retorna
+        case SYS_SBRK:  return sys_sbrk((int64_t)a1);
+        case SYS_OPEN:  return sys_open(a1, a2);
+        case SYS_READ:  return sys_read(a1, a2, a3);
+        case SYS_CLOSE: return sys_close(a1);
         default:        return (uint64_t)-1; // syscall desconhecida
     }
 }

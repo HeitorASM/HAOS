@@ -35,12 +35,33 @@
 extern "C" {
 #endif
 
-#define PROCESS_USER_STACK_PAGES   4   // 16KB de pilha de USUÁRIO —
-                                        // separada da pilha de KERNEL
-                                        // que toda task já tem (essa
-                                        // atende ao RSP0 da TSS para
-                                        // tratar interrupções/syscalls
-                                        // vindas de Ring 3).
+#define PROCESS_USER_STACK_PAGES   16  // 64KB de pilha de USUÁRIO —
+                                        // aumentado de 4 (16KB) depois
+                                        // de um travamento real
+                                        // causado por overflow
+                                        // silencioso: sem guard page
+                                        // (ver USER_STACK_GAP_PAGES em
+                                        // process.c, que agora É uma
+                                        // proteção real), uma pilha de
+                                        // 16KB estourava com poucas
+                                        // chamadas de printf/malloc
+                                        // aninhadas, corrompendo os
+                                        // primeiros blocos da heap
+                                        // (que ficava logo depois) de
+                                        // forma silenciosa — sem
+                                        // nenhum #PF, porque a página
+                                        // "depois" da pilha era
+                                        // simplesmente heap ainda não
+                                        // mapeada, não uma região
+                                        // protegida contra escrita.
+                                        // 64KB dá bastante margem para
+                                        // um programa simples; ver
+                                        // também a guard page real
+                                        // adicionada entre pilha e
+                                        // heap, que agora transforma
+                                        // um estouro remanescente num
+                                        // #PF diagnosticável em vez de
+                                        // corrupção silenciosa.
 
 // Carrega um executável HEXEC a partir de um VfsNode (arquivo já
 // lido em memória via VFS — ver fs/vfs.h) e cria um processo de
@@ -52,6 +73,17 @@ extern "C" {
 // rodar na próxima vez que o scheduler escaloná-lo — não há execução
 // síncrona aqui.
 //
+// `argv_str`: argumentos de linha de comando, concatenados como
+// strings C consecutivas terminadas em '\0' cada uma, com uma string
+// vazia extra ao final marcando o fim da lista (formato: "arg1\0arg2\0\0")
+// — o próprio argv[0] (nome do programa) deve ser o primeiro
+// "argumento" dessa sequência, seguindo a convenção Unix. Passe NULL
+// (ou uma string vazia seguida de outra vazia, "\0\0") para nenhum
+// argumento — nesse caso argc=0 e argv[0]=NULL no crt0 do programa.
+// `argv_len`: tamanho TOTAL de argv_str em bytes, incluindo todos os
+// terminadores '\0' (necessário porque a string tem embutidos vários
+// '\0' internos — strlen() sozinho pegaria só o primeiro argumento).
+//
 // Múltiplos processos podem existir simultaneamente (Fase 3) — cada
 // chamada cria um espaço de endereço independente.
 //
@@ -59,7 +91,28 @@ extern "C" {
 // não é um HEXEC válido, tabela de tasks cheia, ou sem memória). Em
 // caso de NULL, nenhuma página fica vazando.
 struct VfsNode;
-task_t* process_create(const char* name, struct VfsNode* executable_file);
+task_t* process_create(const char* name, struct VfsNode* executable_file,
+                        const char* argv_str, uint64_t argv_len);
+
+// ---- API interna reutilizada por syscall.c (sys_sbrk) ----
+//
+// Estas duas funções eram `static` só de uso interno de
+// process_create() até a syscall SYS_SBRK precisar delas para
+// crescer a heap de usuário sob demanda — expor a MESMA
+// implementação evita duplicar a lógica (nada sutil) de "mapear N
+// páginas num address_space que pode não estar ativo, com rollback
+// completo em caso de falha parcial".
+
+// Mapeia `pages` páginas físicas novas a partir de `virt_start`,
+// dentro do espaço de endereço `as`. Ver implementação em process.c
+// para o comportamento completo de cópia de dados/zero-fill e
+// rollback em falha parcial.
+bool map_region_in(address_space_t* as, uint64_t virt_start,
+                    uint64_t pages, uint64_t flags,
+                    const uint8_t* src_data, uint64_t src_len);
+
+// Arredonda `bytes` para cima, em unidades de PAGE_SIZE_4K.
+uint64_t pages_needed_for(uint64_t bytes);
 
 #ifdef __cplusplus
 }

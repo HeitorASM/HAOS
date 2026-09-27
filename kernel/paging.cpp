@@ -193,6 +193,26 @@ static bool translate_page(pte_t* pml4, uint64_t virt_addr, uint64_t* out_phys) 
     return true;
 }
 
+// Igual a translate_page, mas retorna se a página está mapeada COM
+// o bit PAGE_USER (bit 2) — usado por validate_user_range em
+// syscall.c para garantir que um ponteiro vindo de Ring 3 aponta
+// para memória que o PRÓPRIO processo tinha permissão de acessar,
+// não para uma página de kernel só porque ela "por acaso" está
+// mapeada em algum endereço que o processo escolheu passar.
+static bool is_user_page(pte_t* pml4, uint64_t virt_addr) {
+    if (!pml4) return false;
+    pte_t* pdpt = (pml4[pml4_index(virt_addr)] & 1) ? (pte_t*)(pml4[pml4_index(virt_addr)] & ADDR_MASK) : nullptr;
+    if (!pdpt) return false;
+    pte_t* pd = (pdpt[pdpt_index(virt_addr)] & 1) ? (pte_t*)(pdpt[pdpt_index(virt_addr)] & ADDR_MASK) : nullptr;
+    if (!pd) return false;
+    pte_t* pt = (pd[pd_index(virt_addr)] & 1) ? (pte_t*)(pd[pd_index(virt_addr)] & ADDR_MASK) : nullptr;
+    if (!pt) return false;
+
+    uint32_t idx = pt_index(virt_addr);
+    if (!(pt[idx] & 1)) return false; // não presente
+    return (pt[idx] & (1ULL << 2)) != 0; // bit US (User/Supervisor)
+}
+
 // ---- Identity-mapeia 0..limit_bytes inteiro, granularidade 4KB ----
 static void identity_map_range(uint64_t limit_bytes, uint64_t flags) {
     for (uint64_t addr = 0; addr < limit_bytes; addr += PAGE_SIZE_4K) {
@@ -314,6 +334,12 @@ void paging_unmap(uint64_t virt_addr) {
 
 bool paging_translate(uint64_t virt_addr, uint64_t* out_phys) {
     return translate_page(s_active_pml4, virt_addr, out_phys);
+}
+
+// Ver comentário em is_user_page (acima) — checa o bit PAGE_USER da
+// página no espaço de endereço ATIVO agora.
+bool paging_is_user_page(uint64_t virt_addr) {
+    return is_user_page(s_active_pml4, virt_addr);
 }
 
 bool paging_map_in(address_space_t* as, uint64_t virt_addr, uint64_t phys_addr, uint64_t flags) {

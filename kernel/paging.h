@@ -98,6 +98,16 @@ void paging_unmap(uint64_t virt_addr);
 // mapeada.
 bool paging_translate(uint64_t virt_addr, uint64_t* out_phys);
 
+// Retorna true se `virt_addr` está mapeado no espaço de endereço
+// ATIVO E com o bit PAGE_USER (acessível a partir de Ring 3). Use
+// isto (não só paging_translate) para validar qualquer ponteiro
+// vindo de um processo de usuário antes de acessá-lo a partir do
+// kernel — uma página mapeada mas SEM PAGE_USER (ex.: a pilha de
+// kernel de alguma task, ou o próprio código do kernel) traduziria
+// normalmente com paging_translate, mas nunca deveria ser acessível
+// via um ponteiro que Ring 3 forneceu.
+bool paging_is_user_page(uint64_t virt_addr);
+
 // ---- Regiões com mapeamento sob demanda (demand paging) ----
 // Reserva uma faixa [virt_addr, virt_addr+size) como "válida mas
 // não mapeada". Um #PF dentro dessa faixa aloca e mapeia a página

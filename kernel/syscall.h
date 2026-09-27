@@ -21,10 +21,21 @@
 extern "C" {
 #endif
 
-// ---- Números de syscall (tabela mínima para o teste desta etapa) ----
+// ---- Números de syscall ----
 #define SYS_WRITE  0   // sys_write(const char* str, uint64_t len) -> bytes escritos
 #define SYS_EXIT   1   // sys_exit(int code) -> nunca retorna
-#define SYS_COUNT  2
+#define SYS_SBRK   2   // sys_sbrk(int64_t increment) -> endereço do topo
+                        // ANTERIOR da heap (convenção clássica de
+                        // sbrk() Unix), ou (uint64_t)-1 em erro. Base
+                        // de malloc()/free() na libc.
+#define SYS_OPEN   3   // sys_open(const char* path, uint64_t path_len)
+                        // -> descritor de arquivo (>= 0) ou -1 em erro.
+                        // Só leitura nesta fase (sem O_CREAT/O_WRONLY).
+#define SYS_READ   4   // sys_read(int fd, void* buf, uint64_t count)
+                        // -> bytes lidos (0 = fim de arquivo) ou -1
+                        // em erro (fd inválido, ponteiro inválido).
+#define SYS_CLOSE  5   // sys_close(int fd) -> 0 em sucesso, -1 em erro.
+#define SYS_COUNT  6
 
 // Configura os MSRs necessários (STAR, LSTAR, SFMASK) e habilita
 // EFER.SCE (System Call Extensions). Deve ser chamado depois de

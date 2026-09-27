@@ -6,25 +6,26 @@
 ; libc/hexec.ld, garante isso ao colocar crt0.o no início do .text).
 ;
 ; Responsabilidades de _start:
-;   1. Zerar RBP — sinaliza para qualquer stack unwinder (não que o
+;   1. Ler argc/argv do TOPO da pilha de usuário — o loader
+;      (process_create, em kernel/process.c) monta esses dados lá
+;      ANTES de saltar para cá, seguindo a mesma convenção usada pelo
+;      _start do Linux x86_64: [RSP] = argc, [RSP+8] = argv[0],
+;      [RSP+16] = argv[1], ..., terminado por um ponteiro NULL. Não
+;      inventamos uma convenção nova de propósito — reaproveitar uma
+;      já conhecida reduz a chance de erro e facilita comparar com
+;      referências existentes se algo não bater.
+;   2. Zerar RBP — sinaliza para qualquer stack unwinder (não que o
 ;      HAOS tenha um hoje) que esta é a base da pilha, sem frame
 ;      anterior. Também é higiene padrão de todo _start de C runtime.
-;   2. Chamar main() — hoje sem argumentos (void), porque o loader
-;      HEXEC não passa argc/argv nem envp ainda; isso é uma limitação
-;      conhecida a resolver quando o formato de executável evoluir
-;      (ver hexec.h) para incluir uma forma de passar parâmetros de
-;      linha de comando.
-;   3. Chamar exit() com o valor de retorno de main() — assim um
+;   3. Chamar main(argc, argv) — ATENÇÃO: main() PRECISA aceitar
+;      (int argc, char** argv) agora, não mais main(void). Um
+;      programa que ainda declara main(void) continua funcionando
+;      (a ABI x86_64 não reclama de argumentos extras não lidos),
+;      mas não terá acesso a argc/argv sem atualizar sua assinatura.
+;   4. Chamar exit() com o valor de retorno de main() — assim um
 ;      programa pode simplesmente terminar com "return 0;" em vez de
 ;      ser obrigado a chamar exit()/_exit() manualmente, igual em
 ;      qualquer C hospedado normal.
-;
-; RSP na entrada: o loader (process.c) já posiciona a pilha de
-; usuário corretamente antes de saltar para cá (ver
-; PROCESS_USER_STACK_PAGES em process.h) — não há argc/argv
-; empilhados nela ainda (ver limitação acima), então nenhuma leitura
-; de pilha é necessária aqui além do que main()/exit() já fazem
-; naturalmente via ABI normal de chamada de função.
 bits 64
 
 section .text
@@ -33,13 +34,23 @@ extern main
 extern exit
 
 _start:
-    xor rbp, rbp      ; RBP=0: marca "sem frame anterior" para quem
-                       ; algum dia quiser fazer stack unwinding
-    call main          ; main() -> valor de retorno em EAX (convenção
-                       ; padrão de retorno de int em System V AMD64)
-    movsx rdi, eax     ; exit(int status) espera o argumento em RDI;
-                       ; sign-extend de 32 para 64 bits, igual ao que
-                       ; qualquer libc hospedada faz aqui.
-    call exit          ; nunca retorna
+    ; Neste ponto (recém-saltado do loader, ANTES de qualquer push
+    ; nosso), a pilha está exatamente como process_create() a
+    ; montou:
+    ;   [rsp+0]  = argc
+    ;   [rsp+8]  = argv[0]
+    ;   [rsp+16] = argv[1]
+    ;   ...
+    ;   [rsp+8*argc] = NULL (terminador de argv)
+    pop rdi              ; argc -> primeiro argumento de main (RDI)
+    mov rsi, rsp         ; argv = endereço atual do topo da pilha,
+                          ; que agora (depois do pop acima) já aponta
+                          ; exatamente para argv[0] -> segundo
+                          ; argumento de main (RSI)
+
+    xor rbp, rbp          ; RBP=0: marca "sem frame anterior"
+    call main             ; main(argc, argv) -> retorno em EAX
+    movsx rdi, eax        ; sign-extend de 32 para 64 bits para exit()
+    call exit             ; nunca retorna
 
 section .note.GNU-stack noalloc noexec nowrite progbits

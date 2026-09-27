@@ -95,6 +95,13 @@ void tasking_init(void) {
     t0->user_stack_base  = 0;
     t0->user_stack_pages = 0;
     t0->address_space    = NULL;
+    t0->heap_base        = 0;
+    t0->heap_current     = 0;
+    t0->heap_limit       = 0;
+    for (int fd = 0; fd < TASK_MAX_OPEN_FILES; fd++) {
+        t0->fd_table[fd]  = NULL;
+        t0->fd_offset[fd] = 0;
+    }
     t0->stdout_owner     = NULL;
     t0->stdout_head      = 0;
     t0->stdout_tail      = 0;
@@ -285,6 +292,13 @@ task_t* task_create(const char* name, task_entry_fn entry_point, void* arg) {
     t->user_stack_base   = 0;
     t->user_stack_pages  = 0;
     t->address_space     = NULL;
+    t->heap_base         = 0;
+    t->heap_current      = 0;
+    t->heap_limit        = 0;
+    for (int fd = 0; fd < TASK_MAX_OPEN_FILES; fd++) {
+        t->fd_table[fd]  = NULL;
+        t->fd_offset[fd] = 0;
+    }
     t->stdout_owner      = NULL;
     t->stdout_head       = 0;
     t->stdout_tail       = 0;
@@ -322,10 +336,28 @@ bool task_addr_is_guard_page(uint64_t addr, char* out_task_name) {
     for (int i = 0; i < TASK_MAX_COUNT; i++) {
         task_t* t = &s_tasks[i];
         if (t->state == TASK_UNUSED) continue;
-        if (t->guard_page_addr == 0) continue; // task 0 não tem guard page
-        if (addr >= t->guard_page_addr && addr < t->guard_page_addr + PAGE_SIZE_4K) {
+
+        if (t->guard_page_addr != 0 &&
+            addr >= t->guard_page_addr && addr < t->guard_page_addr + PAGE_SIZE_4K) {
             if (out_task_name) kstrncpy(out_task_name, t->name, TASK_NAME_MAX - 1);
             return true;
+        }
+
+        // Zona entre o fim da pilha de USUÁRIO e o início da heap
+        // (ver USER_STACK_GAP_PAGES em process.c) — deliberadamente
+        // nunca mapeada, funciona como guard page mesmo sem ser
+        // criada por task_alloc_kernel_stack_for. Um overflow de
+        // pilha de usuário (ex.: recursão funda, ou muitas chamadas
+        // de printf/malloc aninhadas antes de a pilha ser grande o
+        // suficiente) cai aqui e agora é diagnosticado explicitamente
+        // em vez de corromper silenciosamente o início da heap, que
+        // ficava logo depois.
+        if (t->is_user_task && t->user_stack_base != 0 && t->heap_base != 0) {
+            uint64_t stack_end = t->user_stack_base + t->user_stack_pages * PAGE_SIZE_4K;
+            if (addr >= stack_end && addr < t->heap_base) {
+                if (out_task_name) kstrncpy(out_task_name, t->name, TASK_NAME_MAX - 1);
+                return true;
+            }
         }
     }
     return false;
@@ -393,10 +425,31 @@ int task_reap_zombies(void) {
             if (t->user_stack_base != 0 && t->user_stack_pages != 0) {
                 task_free_mapped_pages(t->address_space, t->user_stack_base, t->user_stack_pages);
             }
+            // Libera a heap de usuário (sbrk) — só as páginas que
+            // chegaram a ser mapeadas de fato (heap_current pode não
+            // ter avançado tudo até heap_limit; liberar além de
+            // heap_current tentaria desmapear páginas que nunca
+            // existiram, o que task_free_mapped_pages já trata com
+            // segurança via paging_translate_in falhando, mas é mais
+            // claro já calcular a contagem certa aqui).
+            if (t->heap_base != 0 && t->heap_current > t->heap_base) {
+                uint64_t heap_pages = (t->heap_current - t->heap_base) / PAGE_SIZE_4K;
+                task_free_mapped_pages(t->address_space, t->heap_base, heap_pages);
+            }
+            // Fecha quaisquer descritores de arquivo ainda abertos —
+            // um processo que termina sem chamar close() explicitamente
+            // (crash, ou simplesmente esqueceu) não deveria vazar essa
+            // referência para sempre. VfsNode não tem um "contador de
+            // referências" nesta fase, então "fechar" aqui é só
+            // remover a entrada da tabela deste processo.
+            for (int fd = 0; fd < TASK_MAX_OPEN_FILES; fd++) {
+                t->fd_table[fd]  = NULL;
+                t->fd_offset[fd] = 0;
+            }
             // Destrói o espaço de endereço isolado deste processo em
             // si (as tabelas PDPT/PD/PT da metade de usuário do PML4
-            // dele) — precisa acontecer DEPOIS das duas liberações
-            // acima, que ainda precisam das tabelas existirem para
+            // dele) — precisa acontecer DEPOIS das liberações acima,
+            // que ainda precisam das tabelas existirem para
             // traduzir/desmapear.
             if (t->address_space) {
                 paging_destroy_address_space(t->address_space);
@@ -427,6 +480,9 @@ int task_reap_zombies(void) {
         t->user_stack_base   = 0;
         t->user_stack_pages  = 0;
         t->address_space     = NULL; // já destruído acima se era um processo
+        t->heap_base         = 0;
+        t->heap_current      = 0;
+        t->heap_limit        = 0;
         t->stdout_owner      = NULL;
         t->stdout_head       = 0;
         t->stdout_tail       = 0;

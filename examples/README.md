@@ -1,6 +1,7 @@
 # examples/ — programas de exemplo escritos contra a libc do HAOS
 
-Cada subpasta aqui é um programa HEXEC de exemplo/test, escrito em C usando `libc/`, servindo
+Substitui a antiga pasta `userland/` (removida). Cada subpasta aqui
+é um programa HEXEC de exemplo, escrito em C usando `libc/`, servindo
 tanto de prova de conceito quanto de referência para você escrever
 os seus próprios.
 
