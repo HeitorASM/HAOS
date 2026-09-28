@@ -55,9 +55,12 @@ C_SRCS = src/unistd/write.c   \
          src/unistd/open.c    \
          src/unistd/read.c    \
          src/unistd/close.c   \
+         src/unistd/write_fd.c \
+         src/unistd/spawn.c   \
          src/stdlib/exit.c    \
          src/stdlib/malloc.c  \
          src/stdio/printf.c   \
+         src/stdio/scanf.c    \
          src/string/memcpy.c  \
          src/string/memset.c  \
          src/string/memmove.c \

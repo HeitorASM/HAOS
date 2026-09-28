@@ -64,6 +64,18 @@ void scheduler_add(task_t* t) {
 void scheduler_remove(task_t* t) {
     if (!s_queue_head) return;
 
+    // Idempotente: uma task que JÁ foi removida da fila (t->next ==
+    // NULL — ver o fim desta função) simplesmente não está mais nela,
+    // então não há nada a fazer. Isto importa porque task_kill()
+    // remove a task IMEDIATAMENTE (para que ela nunca mais seja
+    // escalonada) e, depois, task_reap_zombies() chama
+    // scheduler_remove() de novo sobre a mesma task ao liberar o
+    // slot. Sem esta guarda, a segunda chamada desreferenciava
+    // NULL->next dentro do reaper com interrupções desabilitadas
+    // (cli) e congelava a máquina inteira — bug encontrado em teste
+    // real no QEMU (teclado morria após Ctrl+C).
+    if (t->next == NULL) return;
+
     if (t->next == t) {
         // Era o único elemento da fila. Isso só pode acontecer de
         // forma segura se `t` não for a task 0 (que nunca é

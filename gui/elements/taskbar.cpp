@@ -1,5 +1,6 @@
 #include "taskbar.h"
 #include "../core/wm.h"
+#include "../core/theme.h"
 #include "../../drivers/fb.h"
 #include "../../drivers/font.h"
 #include "../../drivers/rtc.h"
@@ -32,20 +33,28 @@ static int32_t item_x_at(int visible_index) {
 
 void draw_taskbar(uint64_t ticks, bool start_menu_open) {
     (void)ticks;  // não usamos mais ticks para o relógio
+    const Theme* t = theme_current();
+
     uint32_t sw = fb_width(), sh = fb_height();
     uint32_t ty = sh - TASKBAR_H;
 
-    fb_fill_gradient_v(0, ty, sw, TASKBAR_H, 0x0C1020, 0x060810);
-    fb_fill_rect(0, ty, sw, 1, COLOR_TASKBAR_LINE);
-    fb_fill_gradient_h(0, ty + 1, sw, 1, 0x223A66, 0x0A0E1A);
+    // Todas as cores da taskbar vêm do tema — assim os presets
+    // (XP azul, Algodão Doce rosa, Terminal verde, etc.) afetam
+    // também a barra, e o usuário pode sobrescrever só a cor da
+    // taskbar sem mexer no resto da interface.
+    fb_fill_gradient_v(0, ty, sw, TASKBAR_H,
+                       t->taskbar_bg_top, t->taskbar_bg_bottom);
+    fb_fill_rect(0, ty, sw, 1, t->taskbar_line);
+    fb_fill_gradient_h(0, ty + 1, sw, 1,
+                       t->taskbar_line, t->taskbar_bg_bottom);
 
     // Botão Iniciar
-    uint32_t sb_col = start_menu_open ? COLOR_ACCENT_DARK : 0x101E38;
+    uint32_t sb_col = start_menu_open ? COLOR_ACCENT_DARK : t->taskbar_start_bg;
     fb_draw_rounded_rect(4, ty + 5, START_BTN_W, TASKBAR_H - 10, sb_col, 6);
     if (start_menu_open)
         fb_fill_rect(4, ty + 5, START_BTN_W, 1, 0x5A96E0);
     fb_draw_string_centered(4, ty + 5, START_BTN_W, TASKBAR_H - 10,
-                             tr(STR_START_BUTTON), COLOR_TEXT_LIGHT, 0, true);
+                             tr(STR_START_BUTTON), t->taskbar_text, 0, true);
 
     // ---- Um item por JANELA ATIVA (substitui o bool único
     //      "terminal_active" da versão anterior). Percorre todos
@@ -66,11 +75,11 @@ void draw_taskbar(uint64_t ticks, bool start_menu_open) {
 
         bool is_focused = win->focused && !win->minimized;
 
-        uint32_t bg = is_focused ? 0x1E3E78
-                     : win->minimized ? 0x0A0E18
-                                      : 0x0E1626;
-        uint32_t border = is_focused ? COLOR_ACCENT : 0x2A4A7A;
-        uint32_t text_col = win->minimized ? COLOR_TEXT_DIM : COLOR_TEXT_LIGHT;
+        uint32_t bg = is_focused ? t->taskbar_item_bg_focused
+                     : win->minimized ? t->taskbar_bg_bottom
+                                      : t->taskbar_item_bg;
+        uint32_t border = is_focused ? COLOR_ACCENT : t->taskbar_line;
+        uint32_t text_col = win->minimized ? COLOR_TEXT_DIM : t->taskbar_text;
 
         fb_draw_rounded_rect((uint32_t)ax, ty + 5, TASKBAR_ITEM_W, TASKBAR_H - 10, bg, 5);
         if (is_focused)
@@ -101,8 +110,8 @@ void draw_taskbar(uint64_t ticks, bool start_menu_open) {
 
     uint32_t clock_x = sw - CLOCK_W - 8;
     fb_draw_rounded_rect(clock_x - 4, ty + 5, CLOCK_W + 8, TASKBAR_H - 10,
-                         0x0E1626, 5);
-    fb_fill_rect(clock_x - 4, ty + 5, CLOCK_W + 8, 1, 0x2A4A7A);
+                         t->taskbar_item_bg, 5);
+    fb_fill_rect(clock_x - 4, ty + 5, CLOCK_W + 8, 1, t->taskbar_line);
     fb_draw_string_centered(clock_x - 4, ty + 5, CLOCK_W + 8, TASKBAR_H - 10,
                              tbuf, COLOR_ACCENT, 0, true);
 }

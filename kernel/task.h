@@ -208,10 +208,18 @@ typedef struct task {
     // de FDs completo (stdin/stdout/stderr como fds 0/1/2 de
     // verdade) é uma evolução futura razoável.
     struct VfsNode* fd_table[TASK_MAX_OPEN_FILES];
-    uint32_t        fd_offset[TASK_MAX_OPEN_FILES]; // posição de leitura
-                                                       // atual de cada fd
-                                                       // aberto (sys_read
-                                                       // avança isso).
+    uint32_t        fd_offset[TASK_MAX_OPEN_FILES]; // posição de leitura/
+                                                       // escrita atual de
+                                                       // cada fd aberto.
+                                                       // O bit mais alto
+                                                       // (FD_WRITABLE_BIT)
+                                                       // marca "aberto com
+                                                       // O_WRONLY" — ver
+                                                       // syscall.c. Os 31
+                                                       // bits baixos são o
+                                                       // offset de verdade
+                                                       // (VFS_FILE_MAX é 1
+                                                       // MB, cabe folgado).
 
     // ---- Canal de saída (stdout) para o terminal que o lançou ----
     // Substitui a abordagem anterior de sys_write desenhar direto no
@@ -245,6 +253,31 @@ typedef struct task {
     uint64_t        exit_code;              // código passado a sys_exit,
                                              // válido quando has_exited.
 
+    // ---- Canal de entrada (stdin) vindo do terminal dono ----
+    // Espelha stdout_ring, mas na direção oposta: o terminal
+    // (stdout_owner) é quem PRODUZ aqui, byte a byte, conforme o
+    // usuário digita, ENQUANTO este processo estiver "em foco" nele
+    // (running_process == esta task); sys_read(fd=0,...) é o
+    // CONSUMIDOR, chamado a partir da própria task via syscall. Ao
+    // contrário de stdout_ring, aqui NÃO sobrescrevemos em caso de
+    // buffer cheio — input do usuário não pode ser silenciosamente
+    // perdido como uma linha de log pode; em vez disso
+    // task_stdin_write() simplesmente descarta bytes NOVOS que não
+    // caibam (equivalente a "buffer de teclado cheio, tecla
+    // ignorada", situação rara com um ring de 256 bytes e digitação
+    // humana).
+    uint8_t         stdin_ring[256];
+    uint16_t        stdin_head;             // próxima posição de escrita (produtor: terminal)
+    uint16_t        stdin_tail;             // próxima posição de leitura (consumidor: sys_read)
+    bool            waiting_for_stdin;       // true quando esta task está
+                                             // TASK_BLOCKED especificamente
+                                             // por falta de dado em stdin
+                                             // (distingue de outros motivos
+                                             // de bloqueio que possam existir
+                                             // no futuro) — task_stdin_write()
+                                             // usa isso para saber quando
+                                             // precisa desbloquear a task.
+
     struct task*    next;                   // fila circular do scheduler (round-robin)
 } task_t;
 
@@ -276,6 +309,50 @@ task_t* task_create(const char* name, task_entry_fn entry_point, void* arg);
 _Noreturn
 #endif
 void task_exit(void);
+
+// ---- Encerramento de uma task DE FORA (por outra task) ----
+//
+// Diferente de task_exit() (chamado pela PRÓPRIA task ao terminar
+// normalmente), task_kill() é chamado por OUTRA task — tipicamente
+// a task 0/GUI, quando o usuário aperta Ctrl+C num terminal com um
+// processo rodando (ver on_event em gui/apps/terminal.cpp) — para
+// encerrar `t` à força, sem que `t` tenha cooperado ou sequer
+// esperado isso.
+//
+// Por isso NÃO pode fazer o que task_exit() faz (scheduler_yield()
+// "sumindo" da execução atual): quem chama task_kill() é uma task
+// DIFERENTE de `t`, que precisa CONTINUAR rodando normalmente depois
+// da chamada — só marcamos `t` como TASK_ZOMBIE e a removemos da
+// fila do scheduler (scheduler_remove), garantindo que ela nunca
+// mais seja escalonada. A liberação de memória de verdade continua
+// acontecendo depois, pelo reaper (task_reap_zombies), exatamente
+// como para uma task que terminou sozinha — task_kill() só marca
+// "isto deve morrer", não libera nada aqui.
+//
+// Seguro de chamar mesmo se `t` estava TASK_BLOCKED (ex.: dormindo
+// num sys_read de stdin — ver waiting_for_stdin) — o estado bloqueado
+// é irrelevante depois de virar ZOMBIE, e o processo nunca vai
+// "acordar" de volta porque foi removido da fila do scheduler.
+//
+// NÃO chame isto com `t == task_current()` — para a própria task se
+// matar, use task_exit(), que faz a troca de contexto necessária;
+// task_kill() não faz isso e deixaria a task atual em estado
+// inconsistente (ZOMBIE mas ainda em execução).
+void task_kill(task_t* t);
+
+// ---- Gancho de "adoção" de processos filhos (SYS_SPAWN) ----
+//
+// Quando um processo cria outro via sys_spawn, o filho precisa ser
+// "adotado" pelo terminal dono do PAI, para que a saída dele apareça
+// lá (o terminal só drena as tasks que ele conhece). O kernel (C) não
+// conhece TermState (C++, camada de GUI), então o terminal REGISTRA
+// aqui uma função que faz a adoção: recebe o `stdout_owner` do pai
+// (opaco, void*) e o filho, e devolve true se conseguiu adotar (ex.:
+// havia slot livre em bg_processes) ou false se não (o kernel então
+// desfaz o spawn matando o filho).
+typedef bool (*task_adopt_child_fn)(void* owner, task_t* child);
+void task_set_adopt_child_hook(task_adopt_child_fn fn);
+task_adopt_child_fn task_get_adopt_child_hook(void);
 
 // Task atualmente em execução (NULL antes de tasking_init()).
 task_t* task_current(void);
@@ -382,6 +459,29 @@ uint64_t task_stdout_write(task_t* t, const uint8_t* data, uint64_t len);
 // lançou. Retorna quantos bytes foram copiados (pode ser 0 se não
 // houver nada novo).
 uint64_t task_stdout_read(task_t* t, uint8_t* out_buf, uint64_t max_len);
+
+// ---- Canal de entrada (stdin) de processos de usuário ----
+//
+// Escreve até `len` bytes de `data` no buffer circular de entrada de
+// `t` (chamado pelo terminal a cada tecla digitada, enquanto `t` for
+// o running_process em foco). Diferente de task_stdout_write, NÃO
+// sobrescreve em caso de buffer cheio — bytes que não couberem são
+// descartados sem afetar o que já está no ring (input do usuário não
+// deve "empurrar para fora" input mais antigo ainda não lido).
+// Retorna quantos bytes foram de fato escritos (pode ser < len se o
+// buffer estava quase cheio).
+//
+// Se `t` estava TASK_BLOCKED esperando stdin (waiting_for_stdin),
+// esta função a desbloqueia (volta para TASK_READY) — é assim que um
+// sys_read(fd=0) bloqueado "acorda" quando o usuário finalmente digita
+// algo.
+uint64_t task_stdin_write(task_t* t, const uint8_t* data, uint64_t len);
+
+// Lê até `max_len` bytes já escritos por task_stdin_write() e ainda
+// não consumidos, copiando para `out_buf`. Usado por sys_read(fd=0)
+// em syscall.c. Retorna quantos bytes foram copiados (0 se não houver
+// nada disponível — quem chama decide se isso significa bloquear).
+uint64_t task_stdin_read(task_t* t, uint8_t* out_buf, uint64_t max_len);
 
 #ifdef __cplusplus
 }

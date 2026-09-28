@@ -5,6 +5,9 @@
 #include "../kernel/generated/hello_hexec_data.h"
 #include "../kernel/generated/hello_data_hexec_data.h"
 #include "../kernel/generated/hello_full_hexec_data.h"
+#include "../kernel/generated/calc_hexec_data.h"
+#include "../kernel/generated/notes_hexec_data.h"
+#include "../kernel/generated/launcher_hexec_data.h"
 // Sistema de arquivos virtual que roda na RAM do OS.
 // Arquivos crescem dinamicamente (dobra de capacidade) até VFS_FILE_MAX,
 // e diretórios suportam até VFS_MAX_CHILDREN itens.
@@ -98,6 +101,44 @@ static void vfs_create_defaults(void) {
         if (hello_full && vfs_ensure_capacity(hello_full, HELLO_FULL_HEXEC_SIZE)) {
             kmemcpy(hello_full->data, hello_full_hexec_data, HELLO_FULL_HEXEC_SIZE);
             hello_full->size = HELLO_FULL_HEXEC_SIZE;
+        }
+    }
+
+    // /bin/calc.hexec — calculadora interativa de linha de comando,
+    // testando stdin de verdade: le expressões "numero op numero"
+    // via read(0, ...) (syscall SYS_READ com fd=0, bloqueante — ver
+    // sys_read_stdin em kernel/syscall.c) e imprime o resultado em
+    // loop, até "sair"/"exit". Usa aritmética fixed-point (inteiros
+    // em centésimos) em vez de float/double, já que processos de
+    // usuário rodam sem FPU/SSE (ver comentário em
+    // examples/calc/main.c). Rode com "run calc.hexec".
+    {
+        VfsNode* calc = vfs_touch(bin, "calc.hexec");
+        if (calc && vfs_ensure_capacity(calc, CALC_HEXEC_SIZE)) {
+            kmemcpy(calc->data, calc_hexec_data, CALC_HEXEC_SIZE);
+            calc->size = CALC_HEXEC_SIZE;
+        }
+    }
+
+    // /bin/notes.hexec — testa scanf() + escrita de arquivo via
+    // open2(O_WRONLY|O_CREAT|O_TRUNC) e write_fd() (SYS_WRITE_FD).
+    // Ver examples/notes/main.c. Rode com "run notes.hexec".
+    {
+        VfsNode* notes = vfs_touch(bin, "notes.hexec");
+        if (notes && vfs_ensure_capacity(notes, NOTES_HEXEC_SIZE)) {
+            kmemcpy(notes->data, notes_hexec_data, NOTES_HEXEC_SIZE);
+            notes->size = NOTES_HEXEC_SIZE;
+        }
+    }
+
+    // /bin/launcher.hexec — demonstra spawn() (SYS_SPAWN): inicia dois
+    // processos filho (/bin/hello.hexec) e termina. Ver
+    // examples/launcher/main.c. Rode com "run launcher.hexec".
+    {
+        VfsNode* launcher = vfs_touch(bin, "launcher.hexec");
+        if (launcher && vfs_ensure_capacity(launcher, LAUNCHER_HEXEC_SIZE)) {
+            kmemcpy(launcher->data, launcher_hexec_data, LAUNCHER_HEXEC_SIZE);
+            launcher->size = LAUNCHER_HEXEC_SIZE;
         }
     }
 

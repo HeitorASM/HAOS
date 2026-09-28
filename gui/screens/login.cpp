@@ -20,7 +20,7 @@
 // segurança de verdade (sem salt, sem verificação de força, sem
 // proteção contra quem tem acesso físico ao disco). Adequado para
 // uma v1 single-user sem isolamento de processo; deve ser revisto
-// quando houver multiusuário real 
+// quando houver multiusuário real
 
 #include "login.h"
 #include "../core/container.h"
@@ -47,7 +47,6 @@ extern "C" volatile uint64_t timer_ticks;
 #define LOGIN_FOOTER_H  32
 
 // ---- Hash simples (FNV-1a 32-bit) -------------------------------
-// Só para não gravar a senha em claro no disco — ver aviso acima.
 static uint32_t fnv1a_hash(const char* s) {
     uint32_t h = 2166136261u;
     while (*s) {
@@ -71,12 +70,9 @@ struct UserConfig {
     bool has_user     = false;
     bool has_password = false;
     char name[NAME_MAX + 1] = {0};
-    char password_hash_hex[9] = {0}; // 32 bits em hex = 8 chars + '\0'
+    char password_hash_hex[9] = {0};
 };
 
-// Formato de /etc/user.cfg, uma diretiva por linha:
-//   name=<nome>
-//   pwhash=<8 hex chars>       (linha omitida se não há senha)
 static VfsNode* ensure_etc_dir() {
     VfsNode* root = vfs_root();
     VfsNode* etc  = vfs_find_child(root, "etc");
@@ -102,8 +98,6 @@ static uint32_t read_line_value(const char* data, uint32_t size, uint32_t pos,
         out[j++] = data[pos++];
     }
     out[j] = '\0';
-    // Avança até depois do '\n', se houver, para o chamador continuar
-    // do início da próxima linha.
     while (pos < size && data[pos] != '\n') pos++;
     if (pos < size) pos++;
     return pos;
@@ -129,7 +123,6 @@ static UserConfig load_user_config() {
             kstrncpy(cfg.password_hash_hex, buf, sizeof(cfg.password_hash_hex) - 1);
             cfg.has_password = cfg.password_hash_hex[0] != '\0';
         } else {
-            // Linha desconhecida/futura — pula até o próximo '\n'.
             while (pos < node->size && node->data[pos] != '\n') pos++;
             if (pos < node->size) pos++;
         }
@@ -137,9 +130,6 @@ static UserConfig load_user_config() {
     return cfg;
 }
 
-// Grava nome + (opcionalmente) hash de senha em /etc/user.cfg.
-// password pode ser nullptr/"" — nesse caso nenhuma linha pwhash= é
-// escrita, e o próximo boot não pede senha.
 static void save_user_config(const char* name, const char* password) {
     VfsNode* etc = ensure_etc_dir();
     if (!etc) return;
@@ -171,11 +161,6 @@ static void save_user_config(const char* name, const char* password) {
 }
 
 // ---- UI --------------------------------------------------------
-// Três telas possíveis, controladas por m_stage:
-//   NAME      — primeiro boot, passo 1: pedir nome
-//   PASSWORD  — primeiro boot, passo 2: criar senha (ou pular)
-//   ENTER_PW  — usuário já existe E tem senha: pedir a senha
-//   WELCOME   — usuário já existe e não tem senha: só confirmar
 enum class LoginStage { NAME, PASSWORD, ENTER_PW, WELCOME };
 
 static void on_primary_clicked(Button* self);
@@ -187,26 +172,41 @@ static bool language_switch_contains(uint32_t sw, int32_t mx, int32_t my) {
            my >= LANG_SWITCH_Y && my < LANG_SWITCH_Y + LANG_SWITCH_H;
 }
 
+// Antes esta função tinha todas as cores hardcoded (azul escuro fixo)
+// — em Retro e Algodão Doce o botão ficava com contraste ruim. Agora
+// lê tudo do tema, então cada preset decide como o seletor se parece.
 static void draw_language_switch(uint32_t sw, bool hovered, bool pressed) {
+    const Theme* t = theme_current();
+
     int32_t x = (int32_t)sw - LANG_SWITCH_W - 18;
-    uint32_t bg = pressed ? 0x315E9A : hovered ? 0x284D80 : 0x172B4D;
+    uint32_t bg = pressed ? t->login_lang_bg_pressed
+                : hovered ? t->login_lang_bg_hover
+                          : t->login_lang_bg;
     fb_draw_rounded_rect(x, LANG_SWITCH_Y, LANG_SWITCH_W, LANG_SWITCH_H, bg, 6);
     fb_draw_rect((uint32_t)x, LANG_SWITCH_Y, LANG_SWITCH_W, LANG_SWITCH_H,
-                 0x5D8FD5, 1);
+                 t->login_lang_border, 1);
     fb_draw_string((uint32_t)(x + 10), LANG_SWITCH_Y + 7,
-                   tr(STR_CONFIG_LANGUAGE), 0xD5E7FF, 0, true);
+                   tr(STR_CONFIG_LANGUAGE), t->login_lang_text, 0, true);
+
     int32_t options_x = x + 76;
     bool pt_active = lang_get() == LANG_PT;
-    fb_draw_string((uint32_t)options_x, LANG_SWITCH_Y + 7, "PT", 
-                   pt_active ? 0xFFFFFF : 0x8FA8C8, 0, true);
+    fb_draw_string((uint32_t)options_x, LANG_SWITCH_Y + 7, "PT",
+                   pt_active ? t->login_lang_text_active
+                             : t->login_lang_text_inactive, 0, true);
     fb_draw_string((uint32_t)(options_x + 30), LANG_SWITCH_Y + 7, "EN",
-                   pt_active ? 0x8FA8C8 : 0xFFFFFF, 0, true);
+                   pt_active ? t->login_lang_text_inactive
+                             : t->login_lang_text_active, 0, true);
 }
 
+// Faixa inferior que cobre a área reservada da taskbar (wallpaper_draw
+// reserva essa faixa mas o desktop ainda não existe durante o login).
+// Agora usa as cores do tema — sem isso, Retro ficava com uma faixa
+// escura embaixo e o resto azul, e Candy com uma faixa cinza-azulada.
 static void draw_login_footer(uint32_t sw, uint32_t sh) {
+    const Theme* t = theme_current();
     uint32_t y = sh > LOGIN_FOOTER_H ? sh - LOGIN_FOOTER_H : 0;
-    fb_fill_rect(0, y, sw, LOGIN_FOOTER_H, COLOR_TASKBAR_BG);
-    fb_fill_rect(0, y, sw, 1, COLOR_TASKBAR_LINE);
+    fb_fill_rect(0, y, sw, LOGIN_FOOTER_H, t->login_footer_bg);
+    fb_fill_rect(0, y, sw, 1, t->login_footer_line);
 }
 
 class LoginCard : public Container {
@@ -223,8 +223,13 @@ public:
         const Theme* t = theme_current();
         int32_t ax = ox + bounds.x, ay = oy + bounds.y;
 
-        fb_draw_shadow(ax + 6, ay + 8, bounds.w, bounds.h);
-        fb_draw_rounded_rect(ax - 2, ay - 2, bounds.w + 4, bounds.h + 4, 0x14264A, 12);
+        if (t->window_shadow) {
+            fb_draw_shadow(ax + 6, ay + 8, bounds.w, bounds.h);
+        }
+        // "Anel" externo (halo) agora usa a cor de borda do tema —
+        // em Retro ele fica azul XP, em Candy rosa, etc.
+        fb_draw_rounded_rect(ax - 2, ay - 2, bounds.w + 4, bounds.h + 4,
+                             t->login_card_border, 12);
         fb_draw_rounded_rect(ax, ay, bounds.w, bounds.h, t->panel_bg, 10);
 
         fb_draw_string_centered(ax, ay + 16, bounds.w, 20,
@@ -237,16 +242,10 @@ public:
     const char* name_field_text() const { return m_name_field ? m_name_field->text() : m_known_name; }
     const char* password_field_text() const { return m_pw_field ? m_pw_field->text() : ""; }
 
-    // Reconstrói a tela para o próximo estágio (chamado quando o
-    // usuário avança do passo "nome" para o passo "senha", ou quando
-    // uma senha errada precisa ser digitada de novo). Limpa todos os
-    // widgets do estágio anterior antes de construir os novos —
-    // sem isso, os widgets antigos continuariam na lista, recebendo
-    // eventos e sendo desenhados por baixo/por cima dos novos.
     void advance_to(LoginStage next, uint32_t w) {
         m_stage = next;
         m_children.clear();
-        m_focused_child = nullptr; // protected em Container, acessível aqui via herança
+        m_focused_child = nullptr;
         m_name_field = nullptr;
         m_pw_field   = nullptr;
         m_primary_button = nullptr;
@@ -355,9 +354,6 @@ static void on_skip_password_clicked(Button* /*self*/) {
     s_entered = true;
 }
 
-// Roda o loop de eventos até s_entered (ou até um botão pedir avanço
-// de estágio, tratado pelo chamador). Devolve o motivo da saída via
-// as flags globais acima, que o chamador reseta a cada estágio.
 static void run_stage_loop(uint32_t sw, uint32_t sh) {
     bool was_pressed = false;
     while (!s_entered && !s_advance_requested) {
@@ -411,10 +407,7 @@ static void run_stage_loop(uint32_t sw, uint32_t sh) {
             }
         }
 
-        wallpaper_draw(sw, sh); // fundo real do desktop, não mais um gradiente fixo
-        // wallpaper_draw reserva a faixa inferior para a taskbar. Durante
-        // o login não há taskbar, então ela precisa ser redesenhada a cada
-        // frame para não deixar rastros do cursor.
+        wallpaper_draw(sw, sh);
         draw_login_footer(sw, sh);
         s_card->draw(0, 0);
         draw_language_switch(sw, s_language_hovered, s_language_pressed);
@@ -446,7 +439,6 @@ void run_login_screen(void) {
     char typed_name[NAME_MAX + 1] = {0};
 
     if (!cfg.has_user) {
-        // ---- Primeiro boot: passo 1, nome ----
         s_entered = false; s_advance_requested = false; s_skip_password_requested = false;
         s_card = new LoginCard(cx, cy, CARD_W, CARD_H, LoginStage::NAME, "");
         run_stage_loop(sw, sh);
@@ -458,7 +450,6 @@ void run_login_screen(void) {
             kstrncpy(typed_name, tr(STR_LOGIN_DEFAULT_USER), sizeof(typed_name) - 1);
         }
 
-        // ---- Primeiro boot: passo 2, senha opcional ----
         s_entered = false; s_advance_requested = false; s_skip_password_requested = false;
         s_card->advance_to(LoginStage::PASSWORD, CARD_W);
         run_stage_loop(sw, sh);
@@ -474,13 +465,10 @@ void run_login_screen(void) {
         return;
     }
 
-    // ---- Usuário já configurado ----
     if (cfg.has_password) {
         s_entered = false; s_advance_requested = false;
         s_card = new LoginCard(cx, cy, CARD_W, CARD_H, LoginStage::ENTER_PW, cfg.name);
 
-        // Repete a tela até a senha bater — sem limite de tentativas
-        // nesta v1 (não há bloqueio de conta/lockout ainda).
         while (true) {
             run_stage_loop(sw, sh);
             char hex[9];
@@ -504,4 +492,3 @@ void run_login_screen(void) {
     delete s_card;
     s_card = nullptr;
 }
-

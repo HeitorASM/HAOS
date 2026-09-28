@@ -221,3 +221,15 @@ Para entender os fluxos de inicialização, a arquitetura visual interna e o fun
 * [Multiboot2 Specification](https://www.gnu.org/software/grub/manual/multiboot2/multiboot.html)
 * [Intel 64 and IA-32 Architectures Software Developer Manuals](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
 * [CPUID Instruction](https://en.wikipedia.org/wiki/CPUID)
+
+## Novidades: entrada interativa e mais recursos de processos
+
+- **stdin bloqueante** (`read(0, ...)`) e **`scanf`** (`%d %i %u %c %s`, sem `%f`)
+- **Ctrl+C** encerra o processo em foco no terminal
+- **`run prog.hexec &`** roda em background (até 4 por terminal)
+- **Escrita de arquivos** por processos: `open2(path, O_WRONLY|O_CREAT|O_TRUNC)` + `write_fd()`
+  (fds 0/1/2 são reservados; arquivos começam em fd 3)
+- **`spawn(path, argv)`** — um programa inicia outro (equivale a `CreateProcess`, NÃO é `fork`)
+- Exemplos novos em `examples/`: `calc` (calculadora), `notes` (scanf + arquivo), `launcher` (spawn)
+
+Para gerar novos `.hexec` embutidos: `tools/embed_hexec.py`.

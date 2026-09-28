@@ -105,6 +105,9 @@ void tasking_init(void) {
     t0->stdout_owner     = NULL;
     t0->stdout_head      = 0;
     t0->stdout_tail      = 0;
+    t0->stdin_head       = 0;
+    t0->stdin_tail       = 0;
+    t0->waiting_for_stdin = false;
     t0->has_exited       = false;
     t0->exit_code        = 0;
     t0->next             = t0;   // fila circular de 1 elemento por enquanto
@@ -302,6 +305,9 @@ task_t* task_create(const char* name, task_entry_fn entry_point, void* arg) {
     t->stdout_owner      = NULL;
     t->stdout_head       = 0;
     t->stdout_tail       = 0;
+    t->stdin_head        = 0;
+    t->stdin_tail        = 0;
+    t->waiting_for_stdin = false;
     t->has_exited        = false;
     t->exit_code         = 0;
 
@@ -322,6 +328,72 @@ _Noreturn void task_exit(void) {
     // depois que esta task já não está mais em execução.
     scheduler_yield(); // nunca retorna: a próxima task assume a CPU
     __builtin_unreachable();
+}
+
+static task_adopt_child_fn s_adopt_child_hook = NULL;
+void task_set_adopt_child_hook(task_adopt_child_fn fn) { s_adopt_child_hook = fn; }
+task_adopt_child_fn task_get_adopt_child_hook(void) { return s_adopt_child_hook; }
+
+void task_kill(task_t* t) {
+    if (!t) return;
+    if (t == s_current) return; // ver comentário em task.h — errado
+                                  // por construção, task_exit() é o
+                                  // caminho certo para isso.
+    if (t->state == TASK_UNUSED || t->state == TASK_ZOMBIE) return; // já
+                                  // morta ou nunca existiu — idempotente,
+                                  // sem efeito.
+
+    // Marca como ZOMBIE ANTES de mexer na fila do scheduler: se um
+    // scheduler_tick() (IRQ0) disparasse entre os dois passos, o
+    // pior cenário seria pick_next() ainda considerar `t` candidata
+    // por um instante — mas já como ZOMBIE, pick_next() (que só
+    // aceita READY/RUNNING) já a rejeitaria mesmo antes da remoção
+    // da fila surtir efeito. Ordem defensiva, não estritamente
+    // necessária dado que interrupções continuam habilitadas aqui,
+    // mas reduz a janela de inconsistência a zero custo.
+    t->state = TASK_ZOMBIE;
+
+    // Desassocia imediatamente de waiting_for_stdin: sem isso, se
+    // esta task estava bloqueada esperando teclado, ela ficaria
+    // "meio blocked meio zombie" até algum código futuro checar de
+    // novo — inofensivo na prática (ZOMBIE já a tira do scheduler),
+    // mas deixa o estado limpo e correto para qualquer diagnóstico
+    // futuro que inspecione essa flag.
+    t->waiting_for_stdin = false;
+
+    // Remove da fila do scheduler AGORA (não espera o reaper) — o
+    // MESMO motivo do comentário extenso em scheduler_remove(): uma
+    // task ZOMBIE que continuasse na fila circular seria pulada por
+    // pick_next() normalmente, mas ocupar um slot reciclável antes
+    // de scheduler_remove() rodar já causou bugs sutis neste projeto
+    // (ver o comentário de self-loop em scheduler.c) — matar já
+    // remove da fila em vez de deixar essa limpeza só para quando o
+    // reaper rodar bem depois.
+    scheduler_remove(t);
+
+    // NÃO chamamos task_reap_zombies() nem liberamos memória aqui —
+    // exatamente a mesma divisão de responsabilidade que task_exit()
+    // já usa: marcar como ZOMBIE é uma coisa, liberar páginas
+    // físicas é outra, feita depois pelo reaper (que já sabe pular
+    // tasks cujo stdout_owner ainda não foi solto — ver
+    // task_reap_zombies logo abaixo). Isso também é o que permite ao
+    // terminal mostrar "processo encerrado" para um processo morto
+    // por Ctrl+C exatamente da mesma forma que mostra para um
+    // processo que chamou exit() sozinho — has_exited/exit_code
+    // seguem o mesmo caminho de leitura em ambos os casos (ver
+    // gui/apps/terminal.cpp, term_update_running_process).
+    t->has_exited = true;
+    t->exit_code  = (uint64_t)-1; // convenção: -1 sinaliza "morto à
+                                    // força" (nenhum sys_exit() normal
+                                    // devolve isto como uint64_t —
+                                    // seria precisamente 0xFFFFFFFFFFFFFFFF,
+                                    // um exit code "normal" já bizarro
+                                    // o bastante para ser inequívoco
+                                    // na prática) — o terminal pode
+                                    // usar isto para diferenciar "saiu
+                                    // sozinho" de "morto por Ctrl+C"
+                                    // se quiser uma mensagem diferente
+                                    // (ver term_update_running_process).
 }
 
 // Percorre a tabela de tasks e informa se `addr` cai dentro da
@@ -486,6 +558,9 @@ int task_reap_zombies(void) {
         t->stdout_owner      = NULL;
         t->stdout_head       = 0;
         t->stdout_tail       = 0;
+        t->stdin_head        = 0;
+        t->stdin_tail        = 0;
+        t->waiting_for_stdin = false;
         t->has_exited        = false;
         t->exit_code         = 0;
         t->state             = TASK_UNUSED; // slot pronto para reuso
@@ -535,6 +610,54 @@ uint64_t task_stdout_read(task_t* t, uint8_t* out_buf, uint64_t max_len) {
     while (n < max_len && t->stdout_tail != t->stdout_head) {
         out_buf[n++] = t->stdout_ring[t->stdout_tail];
         t->stdout_tail = (uint16_t)((t->stdout_tail + 1) % TASK_STDOUT_RING_SIZE);
+    }
+    return n;
+}
+
+// ---- stdin: buffer circular na direção oposta ----
+//
+// Produtor = terminal (a cada tecla, enquanto `t` está em foco);
+// Consumidor = sys_read(fd=0) rodando na própria `t`. Ao contrário de
+// stdout, aqui NÃO sobrescrevemos dado antigo não lido quando o
+// buffer enche — ver comentário em task.h sobre o porquê. Isso
+// significa que "cheio" é definido como (head+1) alcançando tail: a
+// escrita simplesmente para de aceitar bytes novos até o consumidor
+// ler alguma coisa e abrir espaço.
+#define TASK_STDIN_RING_SIZE (sizeof(((task_t*)0)->stdin_ring))
+
+uint64_t task_stdin_write(task_t* t, const uint8_t* data, uint64_t len) {
+    if (!t || !data) return 0;
+    uint64_t written = 0;
+    for (uint64_t i = 0; i < len; i++) {
+        uint16_t next_head = (uint16_t)((t->stdin_head + 1) % TASK_STDIN_RING_SIZE);
+        if (next_head == t->stdin_tail) {
+            // Buffer cheio: para de aceitar (política "descarta o mais
+            // novo", oposta à de stdout_ring — ver comentário acima).
+            break;
+        }
+        t->stdin_ring[t->stdin_head] = data[i];
+        t->stdin_head = next_head;
+        written++;
+    }
+
+    // Se a task estava dormindo esperando exatamente por stdin,
+    // qualquer byte novo (mesmo que só 1) a acorda: volta para
+    // TASK_READY, e o scheduler vai escaloná-la de novo na próxima
+    // oportunidade — o sys_read bloqueado (ver syscall.c) então
+    // encontrará dado disponível e retornará normalmente.
+    if (written > 0 && t->waiting_for_stdin) {
+        t->waiting_for_stdin = false;
+        if (t->state == TASK_BLOCKED) t->state = TASK_READY;
+    }
+    return written;
+}
+
+uint64_t task_stdin_read(task_t* t, uint8_t* out_buf, uint64_t max_len) {
+    if (!t || !out_buf) return 0;
+    uint64_t n = 0;
+    while (n < max_len && t->stdin_tail != t->stdin_head) {
+        out_buf[n++] = t->stdin_ring[t->stdin_tail];
+        t->stdin_tail = (uint16_t)((t->stdin_tail + 1) % TASK_STDIN_RING_SIZE);
     }
     return n;
 }

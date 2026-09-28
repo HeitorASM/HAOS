@@ -31,6 +31,16 @@ extern "C" {
 #define SYS_OPEN   3
 #define SYS_READ   4
 #define SYS_CLOSE  5
+#define SYS_WRITE_FD 6
+#define SYS_SPAWN 7
+
+// Flags de open2() — espelham os O_* de kernel/syscall.h.
+#ifndef O_RDONLY
+#define O_RDONLY 0x0
+#define O_WRONLY 0x1
+#define O_CREAT  0x2
+#define O_TRUNC  0x4
+#endif
 
 // Syscall crua de até 5 argumentos — usada internamente pelos
 // wrappers de mais alto nível (write(), _exit(), ver unistd.h).

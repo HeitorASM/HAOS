@@ -15,6 +15,11 @@
 #define PAD 8
 #define TERM_CMD_HISTORY 20
 #define PROMPT_MAX 40
+#define TERM_MAX_BG_PROCESSES 4  // quantos processos em background
+                                   // ("run prog.hexec &") um mesmo
+                                   // terminal pode acompanhar ao
+                                   // mesmo tempo — ver bg_processes
+                                   // em TermState.
 
 // ---- Estado do terminal (era TermState + void* win->content;
 //      agora é membro direto de TerminalWindow) ----
@@ -34,24 +39,46 @@ struct TermState {
     int  cmd_hist_pos;
 
     // ---- Processo de usuário rodando "dentro" deste terminal ----
-    // Só um processo por terminal — cada terminal mostra a saída de
-    // um programa de cada vez. Desde a Fase 3 (isolamento de espaço
-    // de endereço, ver hexec.h/paging.h), isso NÃO limita o sistema
-    // a um processo só: terminais diferentes podem rodar processos
-    // diferentes ao mesmo tempo, cada um com seu próprio address
-    // space. running_process fica NULL quando nenhum programa está
-    // em execução NESTE terminal específico. Enquanto não-NULL,
+    // Só um processo "em foco" por terminal — cada terminal mostra
+    // a saída de um programa de cada vez e só um recebe o teclado.
+    // Desde a Fase 3 (isolamento de espaço de endereço, ver
+    // hexec.h/paging.h), isso NÃO limita o sistema a um processo só:
+    // terminais diferentes podem rodar processos diferentes ao mesmo
+    // tempo, cada um com seu próprio address space. running_process
+    // fica NULL quando nenhum programa está em execução EM FOCO
+    // NESTE terminal específico. Enquanto não-NULL,
     // term_update_running_process() (chamada a cada frame do loop do
     // terminal) drena a saída do processo (task_stdout_read) e a
     // imprime como texto normal, e detecta o momento em que o
     // processo chama sys_exit (has_exited) para mostrar a mensagem
-    // final e liberar este slot para um novo "run".
+    // final e liberar este slot para um novo "run". O teclado (ver
+    // on_event) só é desviado para o stdin deste processo — nunca
+    // dos de bg_processes, abaixo — então só um programa por vez
+    // pode receber input.
     task_t*  running_process;
     // Linha parcial (ainda sem '\n') acumulada entre um dreno e
     // outro — sys_write pode entregar os bytes em pedaços que não
     // batem exatamente com o fim de uma linha.
     char     running_line_buf[TERM_COLS + 1];
     int      running_line_len;
+
+    // ---- Processos em BACKGROUND ("run prog.hexec &") ----
+    //
+    // Diferente de running_process (só 1, recebe teclado, "ocupa" o
+    // terminal), um processo em background continua com
+    // stdout_owner apontando para este terminal (a saída dele ainda
+    // aparece aqui, prefixada com o nome — ver term_update_bg_processes),
+    // mas NÃO bloqueia o prompt: o usuário pode digitar novos
+    // comandos enquanto ele roda. Também não recebe nenhum stdin —
+    // um processo em bg não tem como ler teclado (não haveria como
+    // saber para qual dos vários processos em bg uma tecla deveria
+    // ir); um programa que precisa de input do usuário deve rodar em
+    // foreground (sem '&'). Array de tamanho fixo pequeno — não é
+    // esperado que um usuário rode dezenas de processos em bg ao
+    // mesmo tempo num terminal só; ver TERM_MAX_BG_PROCESSES.
+    task_t*  bg_processes[TERM_MAX_BG_PROCESSES];
+    char     bg_line_buf[TERM_MAX_BG_PROCESSES][TERM_COLS + 1];
+    int      bg_line_len[TERM_MAX_BG_PROCESSES];
 };
 
 static void term_scroll(TermState* t) {
@@ -303,12 +330,19 @@ static void term_update_running_process(TermState* t) {
             term_println(t, t->running_line_buf);
             t->running_line_len = 0;
         }
-        char msg[64] = "[processo encerrado, codigo=";
-        char numbuf[24];
-        kuitoa(proc->exit_code, numbuf);
-        kstrcat(msg, numbuf);
-        kstrcat(msg, "]");
-        term_println(t, msg);
+        // exit_code == (uint64_t)-1 é a convenção de task_kill() para
+        // "morto à força" (Ctrl+C) — mostrar isso como o número
+        // 18446744073709551615 seria ilegível, então tem mensagem própria.
+        if (proc->exit_code == (uint64_t)-1) {
+            term_println(t, "[processo interrompido]");
+        } else {
+            char msg[64] = "[processo encerrado, codigo=";
+            char numbuf[24];
+            kuitoa(proc->exit_code, numbuf);
+            kstrcat(msg, numbuf);
+            kstrcat(msg, "]");
+            term_println(t, msg);
+        }
 
         // Este terminal não é mais "dono" do processo — a task ainda
         // existe (TASK_ZOMBIE) até o reaper global rodar, mas daqui
@@ -319,11 +353,161 @@ static void term_update_running_process(TermState* t) {
     }
 }
 
+// ---- Drena a saída de todos os processos em BACKGROUND ----
+//
+// Espelha term_update_running_process, mas para os slots de
+// bg_processes — chamada a cada frame igual à outra. Diferenças:
+// (1) cada linha impressa é PREFIXADA com "[nome]" para o usuário
+// saber de qual processo em bg veio, já que várias saídas podem se
+// intercalar com o que o usuário está digitando no prompt normal;
+// (2) ao terminar, o slot é liberado (bg_processes[i] = nullptr)
+// mas o TERMINAL em si não é afetado — running_process nem prompt
+// mudam, diferente do caminho de foreground.
+static void term_update_bg_processes(TermState* t) {
+    for (int i = 0; i < TERM_MAX_BG_PROCESSES; i++) {
+        task_t* proc = t->bg_processes[i];
+        if (!proc) continue;
+
+        uint8_t chunk[64];
+        uint64_t n;
+        while ((n = task_stdout_read(proc, chunk, sizeof(chunk))) > 0) {
+            for (uint64_t k = 0; k < n; k++) {
+                char c = (char)chunk[k];
+                if (c == '\n' || t->bg_line_len[i] >= TERM_COLS) {
+                    t->bg_line_buf[i][t->bg_line_len[i]] = '\0';
+                    char prefixed[TERM_COLS + 1];
+                    prefixed[0] = '\0';
+                    kstrncat(prefixed, "[", sizeof(prefixed));
+                    kstrncat(prefixed, proc->name, sizeof(prefixed));
+                    kstrncat(prefixed, "] ", sizeof(prefixed));
+                    kstrncat(prefixed, t->bg_line_buf[i], sizeof(prefixed));
+                    term_println(t, prefixed);
+                    t->bg_line_len[i] = 0;
+                } else {
+                    t->bg_line_buf[i][t->bg_line_len[i]++] = c;
+                }
+            }
+        }
+
+        if (proc->has_exited) {
+            if (t->bg_line_len[i] > 0) {
+                t->bg_line_buf[i][t->bg_line_len[i]] = '\0';
+                char prefixed[TERM_COLS + 1];
+                prefixed[0] = '\0';
+                kstrncat(prefixed, "[", sizeof(prefixed));
+                kstrncat(prefixed, proc->name, sizeof(prefixed));
+                kstrncat(prefixed, "] ", sizeof(prefixed));
+                kstrncat(prefixed, t->bg_line_buf[i], sizeof(prefixed));
+                term_println(t, prefixed);
+                t->bg_line_len[i] = 0;
+            }
+            char msg[80];
+            msg[0] = '\0';
+            kstrncat(msg, "[", sizeof(msg));
+            kstrncat(msg, proc->name, sizeof(msg));
+            if (proc->exit_code == (uint64_t)-1) {
+                kstrncat(msg, "] processo em bg interrompido", sizeof(msg));
+            } else {
+                kstrncat(msg, "] processo em bg encerrado, codigo=", sizeof(msg));
+                char numbuf[24];
+                kuitoa(proc->exit_code, numbuf);
+                kstrncat(msg, numbuf, sizeof(msg));
+            }
+            term_println(t, msg);
+
+            proc->stdout_owner = NULL;
+            t->bg_processes[i] = nullptr;
+        }
+    }
+}
+
+// ---- Adoção de filhos criados por sys_spawn ----
+//
+// Registrada em task_set_adopt_child_hook (ver task.h). `owner` é o
+// stdout_owner do PAI, que sabemos ser um TermState* (é o único tipo
+// que este projeto grava em stdout_owner). Procura um slot livre em
+// bg_processes; se não houver, devolve false e o kernel desfaz o
+// spawn.
+static bool term_adopt_child(void* owner, task_t* child) {
+    TermState* t = (TermState*)owner;
+    if (!t || !child) return false;
+    for (int i = 0; i < TERM_MAX_BG_PROCESSES; i++) {
+        if (!t->bg_processes[i]) {
+            t->bg_processes[i] = child;
+            t->bg_line_len[i]  = 0;
+            return true;
+        }
+    }
+    return false;
+}
+
 static void cmd_run(TermState* t, const char* name) {
-    if (!name || !name[0]) { term_println(t, "uso: run <arquivo.hexec> [args...]"); return; }
-    if (t->running_process) {
-        term_println(t, "run: ja ha um processo rodando neste terminal");
-        return;
+    if (!name || !name[0]) { term_println(t, "uso: run <arquivo.hexec> [args...] [&]"); return; }
+
+    // ---- Detecta "&" no final (background) ----
+    //
+    // Convenção de shell Unix: um "&" como último token da linha
+    // significa "rode isto em background, não espere/ocupe o
+    // terminal". Copiamos `name` para um buffer local mutável
+    // (`line`) porque precisamos cortar o "&" fora antes do parsing
+    // normal de filename/argv abaixo — `name` original (const char*)
+    // não pode ser modificado no lugar.
+    char line[TERM_COLS + 1];
+    kstrncpy(line, name, sizeof(line));
+    line[sizeof(line) - 1] = '\0'; // kstrncpy não garante \0 se name
+                                     // for >= sizeof(line) — ver
+                                     // implementação em memory.cpp.
+
+    bool background = false;
+    {
+        int len = (int)kstrlen(line);
+        int end = len;
+        while (end > 0 && line[end - 1] == ' ') end--; // ignora espaços finais
+        if (end > 0 && line[end - 1] == '&') {
+            // "&" precisa ser um TOKEN separado (precedido por
+            // espaço ou início de linha), não parte de um nome de
+            // arquivo — evita interpretar algo como "nome&estranho"
+            // (improvável, mas mais correto) como pedido de bg.
+            int amp_pos = end - 1;
+            if (amp_pos == 0 || line[amp_pos - 1] == ' ') {
+                background = true;
+                line[amp_pos] = '\0';
+                // Corta espaços que sobraram entre o filename/args e
+                // o "&" removido.
+                int trim = amp_pos;
+                while (trim > 0 && line[trim - 1] == ' ') trim--;
+                line[trim] = '\0';
+            }
+        }
+    }
+    name = line; // resto da função usa `name` normalmente — já sem o "&"
+
+    if (!name[0]) { term_println(t, "uso: run <arquivo.hexec> [args...] [&]"); return; }
+
+    task_t** target_slot = nullptr; // onde guardar o task_t* criado
+    int*     target_line_len = nullptr;
+    char*    target_line_buf = nullptr;
+
+    if (background) {
+        int slot = -1;
+        for (int i = 0; i < TERM_MAX_BG_PROCESSES; i++) {
+            if (!t->bg_processes[i]) { slot = i; break; }
+        }
+        if (slot < 0) {
+            term_println(t, "run: limite de processos em background deste terminal atingido");
+            return;
+        }
+        target_slot = &t->bg_processes[slot];
+        target_line_len = &t->bg_line_len[slot];
+        target_line_buf = t->bg_line_buf[slot];
+    } else {
+        if (t->running_process) {
+            term_println(t, "run: ja ha um processo em foco neste terminal (use '&' para bg)");
+            return;
+        }
+        target_slot = &t->running_process;
+        target_line_len = &t->running_line_len;
+        target_line_buf = t->running_line_buf;
     }
 
     // Separa o nome do arquivo (primeiro token) do resto da linha
@@ -376,10 +560,24 @@ static void cmd_run(TermState* t, const char* name) {
         term_println(t, "     ou tabela de tasks cheia)");
         return;
     }
-    proc->stdout_owner   = t;
-    t->running_process   = proc;
-    t->running_line_len  = 0;
-    term_println(t, "run: processo iniciado");
+    proc->stdout_owner = t;
+    *target_slot        = proc;
+    *target_line_len    = 0;
+    (void)target_line_buf; // já zerado via *target_line_len = 0; o
+                             // conteúdo antigo do buffer é irrelevante
+                             // até running_line_len/bg_line_len[i]
+                             // voltar a crescer.
+
+    if (background) {
+        char msg[64];
+        msg[0] = '\0';
+        kstrncat(msg, "run: [", sizeof(msg));
+        kstrncat(msg, filename, sizeof(msg));
+        kstrncat(msg, "] iniciado em background", sizeof(msg));
+        term_println(t, msg);
+    } else {
+        term_println(t, "run: processo iniciado");
+    }
 }
 
 static void cmd_cat(TermState* t, const char* name) {
@@ -589,6 +787,7 @@ public:
                       m_scrollbar(0, 0, ScrollBar::DEFAULT_WIDTH, 1)
     {
         kmemset(&m_state, 0, sizeof(TermState));
+        task_set_adopt_child_hook(term_adopt_child); // idempotente: sempre a mesma função
         m_state.num_lines      = 1;
         m_state.cursor_visible = true;
         m_state.last_blink     = 0;
@@ -609,11 +808,19 @@ public:
         // próxima vez que outro terminal também fosse fechado e essa
         // região de memória fosse reaproveitada para outra coisa). O
         // processo em si continua rodando até terminar sozinho ou ser
-        // colhido pelo reaper — esta fase ainda não tem uma forma de
-        // "matar" um processo de fora, isso fica para depois.
+        // morto (Ctrl+C, enquanto em foco) ou colhido pelo reaper.
         if (m_state.running_process) {
             m_state.running_process->stdout_owner = nullptr;
             m_state.running_process = nullptr;
+        }
+        // Mesma desassociação para cada processo em background —
+        // eles têm exatamente o mesmo risco de ponteiro pendurado,
+        // só que em stdout_owner de várias tasks em vez de uma.
+        for (int i = 0; i < TERM_MAX_BG_PROCESSES; i++) {
+            if (m_state.bg_processes[i]) {
+                m_state.bg_processes[i]->stdout_owner = nullptr;
+                m_state.bg_processes[i] = nullptr;
+            }
         }
     }
 
@@ -630,6 +837,10 @@ public:
                                           // uma cadência de atualização
                                           // visível sem precisar de um
                                           // timer dedicado.
+        term_update_bg_processes(t); // idem, mas para os processos em
+                                       // background (ver comentário na
+                                       // função) — independente de
+                                       // running_process existir ou não.
         Rect content = content_area_absolute();
         int bx = content.x + PAD;
         int by = content.y + PAD;
@@ -682,6 +893,30 @@ public:
 
         int input_y = by + output_rows * FONT_H;
         fb_fill_rect((uint32_t)bx, (uint32_t)input_y, (uint32_t)bw, FONT_H, COLOR_TERM_BG);
+
+        if (t->running_process) {
+            // Processo em foco: a linha de input não mostra o prompt
+            // do shell (haos:/caminho>) nem t->input — mostra o que
+            // foi digitado ATÉ AGORA para o processo (running_line_buf),
+            // que só vira uma linha de histórico de verdade quando um
+            // '\n' fecha ela (ver on_event, ramo running_process,
+            // acima). Sem isso, o usuário digitava "às cegas": o byte
+            // já ia para o stdin_ring do processo, mas nada aparecia
+            // na tela até apertar Enter.
+            if (t->running_line_len > 0) {
+                char echo_buf[TERM_COLS + 1];
+                int copy = t->running_line_len < TERM_COLS ? t->running_line_len : TERM_COLS;
+                kmemcpy(echo_buf, t->running_line_buf, (size_t)copy);
+                echo_buf[copy] = '\0';
+                fb_draw_string((uint32_t)bx, (uint32_t)input_y,
+                               echo_buf, COLOR_TEXT_LIGHT, 0, true);
+            }
+            int cx = bx + FONT_W * t->running_line_len;
+            uint32_t cur_color = t->cursor_visible ? COLOR_TERM_PROMPT : COLOR_TERM_BG;
+            fb_fill_rect((uint32_t)cx, (uint32_t)(input_y + 1), 2, FONT_H - 3, cur_color);
+            m_scrollbar.draw(0, 0);
+            return;
+        }
 
         char prompt[PROMPT_MAX + 1];
         term_build_prompt(prompt, sizeof(prompt));
@@ -744,6 +979,93 @@ public:
         if (ev.type != EventType::KeyDown) return EventResult::Ignored;
 
         uint8_t c = ev.key;
+
+        // ---- Processo em foco: teclado vai para o stdin dele, não
+        // para o prompt do shell ----
+        //
+        // Enquanto um processo estiver rodando "dentro" deste
+        // terminal (t->running_process != nullptr), o usuário está
+        // interagindo com AQUELE programa, não digitando um novo
+        // comando de shell — então o comportamento normal de edição
+        // de linha do prompt (histórico, backspace no buffer local,
+        // Enter chamando term_execute) fica suspenso, e cada tecla
+        // vira um byte no stdin_ring do processo via
+        // task_stdin_write(). Só teclas de navegação/scroll (tratadas
+        // acima, antes deste bloco) continuam funcionando — faz
+        // sentido rolar a saída de um programa rodando.
+        //
+        // Ecoamos a tecla localmente (running_line_buf, o mesmo
+        // buffer que term_update_running_process usa para acumular
+        // saída do processo) para o usuário ver o que digitou — a
+        // maioria dos programas de terminal em HAOS não implementa
+        // eco próprio (não têm um "modo raw" configurável ainda),
+        // então sem isso o usuário digitaria "às cegas".
+        if (t->running_process) {
+            task_t* proc = t->running_process;
+
+            // ---- Ctrl+C: mata o processo em foco ----
+            //
+            // Convenção universal de terminal (Unix desde sempre,
+            // Windows desde bem cedo também): Ctrl+C interrompe o
+            // programa em execução, não fecha a janela nem é
+            // repassado como um caractere normal para o stdin dele.
+            // KEY_CTRL_C (ver kernel/keyboard.h) só chega aqui
+            // quando ESTE widget tem foco de teclado, então é seguro
+            // interpretá-lo como "matar processo" sem interferir com
+            // o uso de Ctrl+C como "copiar" em outros lugares da GUI
+            // (editor de texto, etc.) — cada widget decide o que
+            // Ctrl+C significa para si.
+            //
+            // task_kill() (kernel/task.c) marca a task como ZOMBIE e
+            // a remove do scheduler IMEDIATAMENTE — mesmo que ela
+            // estivesse TASK_BLOCKED dormindo num sys_read(stdin)
+            // esperando exatamente a tecla que acabou de chegar (ver
+            // waiting_for_stdin em task.h). Depois disso o próximo
+            // draw() (via term_update_running_process) vai detectar
+            // has_exited=true e mostrar a mensagem final, exatamente
+            // como para um processo que terminou sozinho.
+            if (c == KEY_CTRL_C) {
+                task_kill(proc);
+                if (t->running_line_len > 0) {
+                    t->running_line_buf[t->running_line_len] = '\0';
+                    term_println(t, t->running_line_buf);
+                    t->running_line_len = 0;
+                }
+                term_println(t, "^C");
+                return EventResult::Handled;
+            }
+
+            if (c == '\n' || c == '\r') {
+                uint8_t nl = '\n';
+                task_stdin_write(proc, &nl, 1);
+                // Fecha a linha ecoada visualmente, igual a uma linha
+                // de saída normal do processo.
+                t->running_line_buf[t->running_line_len] = '\0';
+                term_println(t, t->running_line_buf);
+                t->running_line_len = 0;
+            } else if (c == '\b' || c == 0x08) {
+                // Backspace: só tem efeito no eco visual local (apaga
+                // o último caractere da linha ainda não enviada) —
+                // NÃO enviamos um byte 0x08 para o stdin_ring, porque
+                // a maioria dos programas simples aqui não interpreta
+                // backspace como edição (eles leem byte a byte até um
+                // '\n'); enviar 0x08 só apareceria como um caractere
+                // de controle estranho no meio da entrada deles. Isso
+                // é uma simplificação deliberada — um "modo raw" de
+                // verdade, onde o próprio processo decide como tratar
+                // backspace, fica para quando houver necessidade real
+                // (ex.: um editor de linha interativo rodando como
+                // processo de usuário).
+                if (t->running_line_len > 0) t->running_line_len--;
+            } else if (c >= 0x20 && c < 0x7F) {
+                uint8_t byte = c;
+                task_stdin_write(proc, &byte, 1);
+                if (t->running_line_len < TERM_COLS) {
+                    t->running_line_buf[t->running_line_len++] = (char)c;
+                }
+            }
+            return EventResult::Handled;
+        }
 
         int max_offset = t->num_lines > output_rows ? t->num_lines - output_rows : 0;
         if (c == KEY_PAGE_UP) {
