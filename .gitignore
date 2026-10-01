@@ -1,6 +1,7 @@
 # Arquivos de Objeto e Binários
 *.o
 *.elf
+*.a
 
 # Ignora a imagem final do sistema
 *.iso
