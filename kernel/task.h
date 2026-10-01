@@ -88,6 +88,16 @@ typedef struct {
     uint64_t rip;   // endereço de retorno (onde a task estava quando saiu da CPU)
 } task_context_t;
 
+// Bit alto de fd_offset[] (campo de task_t, abaixo) = "este fd foi
+// aberto com O_WRONLY" (ver sys_open em syscall.c). Definido aqui,
+// fora da struct, para ser visível tanto de kernel/syscall.c (que o
+// usa para decidir se sys_write_fd tem permissão de escrever) quanto
+// de kernel/task.c (que o usa no reaper — task_reap_zombies — para
+// saber se precisa sincronizar com disco antes de fechar um fd que o
+// processo deixou aberto ao terminar; ver vfs_sync() ali).
+#define FD_WRITABLE_BIT 0x80000000u
+#define FD_OFFSET_MASK  0x7FFFFFFFu
+
 typedef struct task {
     uint64_t        id;                     // PID interno (índice + geração)
     task_state_t    state;
@@ -120,7 +130,7 @@ typedef struct task {
     // ---- Campos exclusivos de PROCESSOS DE USUÁRIO (Fase 2) ----
     // Para kernel threads (Fase 1), is_user_task é false e todos os
     // campos abaixo ficam zerados/ignorados.
-    bool            is_user_task;           // true = processo Ring 3
+    bool32_t        is_user_task;           // true = processo Ring 3
                                              // criado por process_create();
                                              // false = kernel thread pura
                                              // (Fase 1, task_create()).
@@ -212,7 +222,9 @@ typedef struct task {
                                                        // escrita atual de
                                                        // cada fd aberto.
                                                        // O bit mais alto
-                                                       // (FD_WRITABLE_BIT)
+                                                       // (FD_WRITABLE_BIT,
+                                                       // definido acima
+                                                       // desta struct)
                                                        // marca "aberto com
                                                        // O_WRONLY" — ver
                                                        // syscall.c. Os 31
@@ -242,7 +254,35 @@ typedef struct task {
     uint8_t         stdout_ring[256];       // buffer circular de saída
     uint16_t        stdout_head;            // próxima posição de escrita
     uint16_t        stdout_tail;            // próxima posição de leitura
-    bool            has_exited;             // true assim que sys_exit
+
+    // ---- "Segurar" um zumbi para SYS_WAITPID ----
+    //
+    // O reaper (task_reap_zombies) só recicla uma task TASK_ZOMBIE
+    // quando NENHUM lado ainda precisa ler o resultado dela — hoje
+    // isso já vale para stdout_owner (o terminal precisa mostrar a
+    // mensagem final antes do slot sumir). waiter_pid é a mesma ideia
+    // do lado de um processo PAI que chamou sys_waitpid(child_pid) e
+    // ainda não recebeu o exit_code: enquanto waiter_pid == o id de
+    // um processo esperando, o reaper NÃO recicla esta task, mesmo
+    // que stdout_owner já tenha sido solto pelo terminal (caso comum:
+    // um filho em background termina, term_update_bg_processes já
+    // soltou stdout_owner no frame seguinte, mas o pai ainda não
+    // rodou seu waitpid()).
+    //
+    // Por que um id (uint64_t) e não um task_t* direto para o pai:
+    // se o PAI morresse antes de chamar waitpid (crash, kill, etc.),
+    // um ponteiro ficaria pendurado apontando para um slot que o
+    // reaper já reciclou para outra task completamente diferente.
+    // Um id nunca "reaparece" (s_next_id só cresce — ver task.c),
+    // então comparar id é seguro mesmo que o slot original do pai
+    // já tenha sido reciclado.
+    uint64_t        waiter_pid;             // 0 = ninguém esperando por
+                                             // esta task; caso contrário,
+                                             // id do processo que chamou
+                                             // sys_waitpid nela e ainda
+                                             // não recebeu o resultado.
+
+    bool32_t        has_exited;             // true assim que sys_exit
                                              // for chamado — o terminal
                                              // usa isso para mostrar
                                              // "processo encerrado" uma
@@ -269,7 +309,7 @@ typedef struct task {
     uint8_t         stdin_ring[256];
     uint16_t        stdin_head;             // próxima posição de escrita (produtor: terminal)
     uint16_t        stdin_tail;             // próxima posição de leitura (consumidor: sys_read)
-    bool            waiting_for_stdin;       // true quando esta task está
+    bool32_t        waiting_for_stdin;       // true quando esta task está
                                              // TASK_BLOCKED especificamente
                                              // por falta de dado em stdin
                                              // (distingue de outros motivos
@@ -356,6 +396,19 @@ task_adopt_child_fn task_get_adopt_child_hook(void);
 
 // Task atualmente em execução (NULL antes de tasking_init()).
 task_t* task_current(void);
+
+// Procura uma task pelo id (task_t::id, atribuído sequencialmente em
+// task_create/process_create — nunca reutilizado, ver s_next_id em
+// task.c). Devolve NULL se não houver NENHUMA task viva com esse id
+// — o que cobre tanto "id nunca existiu" quanto "existiu, terminou, e
+// já foi totalmente reciclada pelo reaper" (não dá pra distinguir os
+// dois casos só pelo id, mas para sys_waitpid isso é exatamente o
+// comportamento certo: se o id não corresponde a nada vivo, não há
+// como esperar por ele). Note que uma task TASK_ZOMBIE ainda "viva"
+// (aguardando o reaper) É encontrada normalmente — é assim que
+// sys_waitpid consegue ler exit_code de um filho que já terminou mas
+// ainda não foi reciclado.
+task_t* task_find_by_id(uint64_t id);
 
 // Usado internamente pelo scheduler para atualizar qual task é a
 // "atual" logo após uma troca de contexto bem-sucedida. Não chame
@@ -482,6 +535,52 @@ uint64_t task_stdin_write(task_t* t, const uint8_t* data, uint64_t len);
 // em syscall.c. Retorna quantos bytes foram copiados (0 se não houver
 // nada disponível — quem chama decide se isso significa bloquear).
 uint64_t task_stdin_read(task_t* t, uint8_t* out_buf, uint64_t max_len);
+
+// ---- Trava de layout: C e C++ têm que concordar sobre task_t ----
+//
+// task_t é incluída tanto por código C (kernel/task.c, syscall.c,
+// process.c, scheduler.c — compilados com -std=c11) quanto por
+// código C++ (gui/apps/terminal.cpp, gui/screens/desktop.cpp —
+// -std=c++17). As duas linguagens são livres para escolher tamanhos
+// DIFERENTES para certos tipos (o caso real que mordeu este projeto:
+// `bool` é 1 byte em C++ nativo, mas era 4 bytes no `typedef int
+// bool` deste kernel em C — ver o comentário grande em types.h sobre
+// bool32_t). Quando isso acontece, um ponteiro `task_t*` idêntico
+// aponta para offsets DIFERENTES de um mesmo campo dependendo de
+// quem está olhando — sem NENHUM erro de compilação, só corrupção de
+// memória silenciosa em runtime (foi assim que a saída de processos
+// parou de aparecer numa sessão de debug real deste projeto).
+//
+// Esta macro captura sizeof(task_t) no ponto em que um arquivo
+// específico a expande. Cada arquivo .c E cada arquivo .cpp que
+// inclui task.h deve chamar isto UMA VEZ, no escopo de arquivo, com
+// um nome único (convenção: task_layout_guard_<nome_do_arquivo>) —
+// se o tamanho computado por aquele arquivo não bater com o valor
+// gravado aqui (atualizado manualmente sempre que task_t muda de
+// verdade), a compilação FALHA imediatamente com uma mensagem
+// apontando para este comentário, em vez de deixar o bug se
+// manifestar como "a saída do processo sumiu" três camadas de
+// abstração depois. Ver kernel/task.c e gui/apps/terminal.cpp para
+// os pontos de uso.
+#define TASK_T_EXPECTED_SIZE 824
+
+#ifdef __cplusplus
+  #define TASK_LAYOUT_GUARD(unique_name) \
+      static_assert(sizeof(task_t) == TASK_T_EXPECTED_SIZE, \
+          "task_t tem tamanho diferente do esperado neste arquivo - " \
+          "provavelmente C e C++ estao discordando sobre o tamanho de " \
+          "algum campo (ex.: bool). Veja o comentario acima de " \
+          "TASK_LAYOUT_GUARD em kernel/task.h antes de mudar " \
+          "TASK_T_EXPECTED_SIZE.")
+#else
+  #define TASK_LAYOUT_GUARD(unique_name) \
+      _Static_assert(sizeof(task_t) == TASK_T_EXPECTED_SIZE, \
+          "task_t tem tamanho diferente do esperado neste arquivo - " \
+          "provavelmente C e C++ estao discordando sobre o tamanho de " \
+          "algum campo (ex.: bool). Veja o comentario acima de " \
+          "TASK_LAYOUT_GUARD em kernel/task.h antes de mudar " \
+          "TASK_T_EXPECTED_SIZE.")
+#endif
 
 #ifdef __cplusplus
 }

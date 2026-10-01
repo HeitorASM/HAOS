@@ -30,6 +30,37 @@ typedef __PTRDIFF_TYPE__   ssize_t;
   typedef int bool;
 #endif
 
+// ---- bool32_t: booleano de tamanho FIXO para structs compartilhadas
+// entre C e C++ ----
+//
+// `bool` (nativo em C++, `typedef int` aqui em C) tem tamanhos
+// DIFERENTES nas duas linguagens: 1 byte em C++, 4 bytes neste
+// projeto em C. Enquanto esse campo fica isolado entre vizinhos de 8
+// bytes (como uint64_t), o padding de alinhamento absorve a
+// diferença e o layout da struct acaba batendo por sorte — mas um
+// ARRAY de bool, ou vários bool seguidos, NÃO tem essa sorte: o
+// mesmo campo cai em offsets diferentes dependendo de quem
+// (task.c/.c, ou terminal.cpp/.cpp) está enxergando a struct.
+//
+// Isso já causou um bug real neste projeto: um `bool
+// fd_writable[TASK_MAX_OPEN_FILES]` dentro de task_t fazia
+// kernel/task.c (C, bool=4 bytes) e gui/apps/terminal.cpp (C++,
+// bool=1 byte) discordarem sobre o offset de TODOS os campos
+// seguintes da struct — terminal.cpp escrevia stdout_owner 24 bytes
+// adiantado do endereço que syscall.c/task.c liam, corrompendo
+// stdin_ring e fazendo a saída do processo simplesmente parar de
+// aparecer, sem nenhum erro de compilação.
+//
+// Regra do projeto: QUALQUER struct definida em um .h incluído tanto
+// por código C (kernel/*.c) quanto por código C++ (gui/**/*.cpp) —
+// como task_t — usa bool32_t no lugar de bool para qualquer campo
+// booleano. bool nativo continua ok para variáveis locais e
+// parâmetros de função (que não têm layout binário compartilhado),
+// só não em campos de struct que atravessam essa fronteira.
+typedef uint32_t bool32_t;
+#define BOOL32_TRUE  ((bool32_t)1)
+#define BOOL32_FALSE ((bool32_t)0)
+
 // I/O ports — funcionam em C e C++
 static inline void outb(uint16_t port, uint8_t val) {
     __asm__ volatile ("outb %0, %1" : : "a"(val), "Nd"(port));

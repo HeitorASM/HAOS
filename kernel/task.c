@@ -6,8 +6,17 @@
 #include "memory.h"
 #include "paging.h"
 #include "scheduler.h"
+#include "../fs/vfs.h" // só para vfs_sync() no reaper — ver comentário
+                        // grande junto de "Fecha quaisquer descritores"
+                        // logo abaixo em task_reap_zombies.
 
 extern void task_switch(uint64_t* old_rsp_ptr, uint64_t new_rsp);
+
+// Ver o comentário grande em TASK_LAYOUT_GUARD (kernel/task.h): trava
+// em tempo de compilação para garantir que o compilador C, aqui,
+// concorda com qualquer compilador C++ que também inclua task.h
+// (gui/apps/terminal.cpp) sobre o tamanho de task_t.
+TASK_LAYOUT_GUARD(task_c);
 
 static task_t  s_tasks[TASK_MAX_COUNT];
 static uint64_t s_next_id = 1;
@@ -105,6 +114,7 @@ void tasking_init(void) {
     t0->stdout_owner     = NULL;
     t0->stdout_head      = 0;
     t0->stdout_tail      = 0;
+    t0->waiter_pid       = 0;
     t0->stdin_head       = 0;
     t0->stdin_tail       = 0;
     t0->waiting_for_stdin = false;
@@ -117,6 +127,15 @@ void tasking_init(void) {
 
 task_t* task_current(void) {
     return s_current;
+}
+
+task_t* task_find_by_id(uint64_t id) {
+    if (id == 0) return NULL; // 0 nunca é atribuído (s_next_id começa em 1)
+    for (int i = 0; i < TASK_MAX_COUNT; i++) {
+        if (s_tasks[i].state == TASK_UNUSED) continue;
+        if (s_tasks[i].id == id) return &s_tasks[i];
+    }
+    return NULL;
 }
 
 // Usado pelo scheduler para atualizar qual é a task "atual" sem
@@ -305,6 +324,7 @@ task_t* task_create(const char* name, task_entry_fn entry_point, void* arg) {
     t->stdout_owner      = NULL;
     t->stdout_head       = 0;
     t->stdout_tail       = 0;
+    t->waiter_pid        = 0;
     t->stdin_head        = 0;
     t->stdin_tail        = 0;
     t->waiting_for_stdin = false;
@@ -447,6 +467,10 @@ bool task_any_user_process_alive(void) {
 int task_reap_zombies(void) {
     int reaped = 0;
     task_t* self = s_current;
+    bool needs_disk_sync = false; // ver comentário grande mais abaixo,
+                                    // perto de onde isto é lido —
+                                    // fica FORA do escopo cli/sti de
+                                    // propósito.
 
     // Desabilita interrupções durante toda a varredura+liberação: um
     // scheduler_tick() disparado pelo PIT no meio disto poderia trocar
@@ -477,6 +501,18 @@ int task_reap_zombies(void) {
             // corrida onde o reaper colhe a task exatamente no
             // intervalo entre o sys_exit e o próximo draw() do
             // terminal, fazendo a mensagem final nunca aparecer.
+            continue;
+        }
+        if (t->waiter_pid != 0) {
+            // Mesma lógica do stdout_owner acima, mas para um
+            // processo PAI que chamou sys_waitpid(t) e ainda não leu
+            // o resultado — ver o comentário grande em task.h sobre
+            // waiter_pid. Sem esta checagem, um filho em background
+            // que termina teria stdout_owner solto pelo terminal no
+            // frame seguinte (term_update_bg_processes) e seria
+            // reciclado ANTES do pai ter a chance de rodar seu
+            // waitpid() e ler o exit_code — sys_waitpid encontraria
+            // um slot TASK_UNUSED em vez do zumbi esperado.
             continue;
         }
 
@@ -514,7 +550,31 @@ int task_reap_zombies(void) {
             // referência para sempre. VfsNode não tem um "contador de
             // referências" nesta fase, então "fechar" aqui é só
             // remover a entrada da tabela deste processo.
+            //
+            // Sincronização com disco: sys_write_fd (syscall.c) NÃO
+            // grava no disco a cada chamada (haosfs_save regrava o
+            // filesystem inteiro do zero — caro demais para fazer por
+            // escrita); o ponto normal de persistir é sys_close. Um
+            // processo que termina com um fd gravável ainda aberto
+            // (esqueceu de chamar close(), ou crashou) passaria por
+            // aqui SEM nunca ter persistido essas escritas — por isso
+            // verificamos FD_WRITABLE_BIT e marcamos needs_disk_sync.
+            //
+            // IMPORTANTE: NÃO chamamos vfs_sync() AQUI DENTRO, porque
+            // esta função inteira roda com interrupções desabilitadas
+            // (cli logo acima) — uma seção crítica pensada para ser
+            // curta (mexer em algumas structs e tabelas de página),
+            // não para hospedar I/O de disco síncrono via PIO
+            // (haosfs_save faz várias leituras/escritas de bloco, uma
+            // travessia da árvore VFS inteira). Rodar isso com cli
+            // ativo travaria o sistema inteiro (sem timer, sem
+            // teclado) pela duração da operação de disco. Em vez
+            // disso, só marcamos a intenção aqui; o sync de verdade
+            // acontece DEPOIS do sti, no fim desta função.
             for (int fd = 0; fd < TASK_MAX_OPEN_FILES; fd++) {
+                if (t->fd_table[fd] != NULL && (t->fd_offset[fd] & FD_WRITABLE_BIT)) {
+                    needs_disk_sync = true;
+                }
                 t->fd_table[fd]  = NULL;
                 t->fd_offset[fd] = 0;
             }
@@ -558,6 +618,7 @@ int task_reap_zombies(void) {
         t->stdout_owner      = NULL;
         t->stdout_head       = 0;
         t->stdout_tail       = 0;
+        t->waiter_pid        = 0;
         t->stdin_head        = 0;
         t->stdin_tail        = 0;
         t->waiting_for_stdin = false;
@@ -568,6 +629,16 @@ int task_reap_zombies(void) {
     }
 
     __asm__ volatile("sti");
+
+    // Sync de disco fora da seção crítica de propósito — ver o
+    // comentário grande junto de "needs_disk_sync = true" acima.
+    // Interrupções já estão de volta aqui, então um scheduler_tick()
+    // pode acontecer normalmente durante o I/O de disco (PIO é
+    // síncrono/polling do ponto de vista da CPU, então esta própria
+    // task ainda "trava" esperando o disco — mas o RESTO do sistema,
+    // via IRQ, continua respondendo, que é a proteção que importava).
+    if (needs_disk_sync) vfs_sync();
+
     return reaped;
 }
 

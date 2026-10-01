@@ -57,6 +57,7 @@ C_SRCS = src/unistd/write.c   \
          src/unistd/close.c   \
          src/unistd/write_fd.c \
          src/unistd/spawn.c   \
+         src/unistd/waitpid.c \
          src/stdlib/exit.c    \
          src/stdlib/malloc.c  \
          src/stdio/printf.c   \

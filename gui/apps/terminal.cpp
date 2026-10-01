@@ -12,6 +12,15 @@
 #include "../widgets_basic.h"
 #include "../../kernel/process.h"
 
+// Ver o comentário grande em TASK_LAYOUT_GUARD (kernel/task.h): trava
+// em tempo de compilação para garantir que este compilador C++
+// concorda com o compilador C do kernel (kernel/task.c e outros)
+// sobre o tamanho de task_t — este arquivo é o único .cpp do projeto
+// que de fato lê/escreve campos de task_t (proc->stdout_owner,
+// proc->has_exited, etc.), então é o ponto certo para checar o lado
+// C++ dessa fronteira.
+TASK_LAYOUT_GUARD(terminal_cpp);
+
 #define PAD 8
 #define TERM_CMD_HISTORY 20
 #define PROMPT_MAX 40

@@ -75,14 +75,34 @@ ssize_t write_fd(int fd, const void* buf, size_t count);
 // Inicia um NOVO processo a partir do executável HEXEC em `path`
 // (caminho absoluto no VFS), passando `argv` (array de strings
 // terminado em NULL; argv[0] deve ser o nome do programa — se argv
-// for NULL, usa só o próprio path). Retorna 0 em sucesso, -1 em erro.
+// for NULL, usa só o próprio path). Retorna o id do processo filho
+// (> 0) em sucesso — passe esse valor para waitpid() se quiser
+// esperar o filho terminar — ou -1 em erro.
 //
 // Equivale ao CreateProcess()/posix_spawn() — NÃO é fork(): o filho
 // começa do início do próprio executável, não continua de onde o pai
 // parou. O filho roda em background do mesmo terminal do pai (a saída
-// dele aparece lá prefixada com "[nome]"), não recebe stdin, e o pai
-// NÃO espera por ele. Falha se o pai não foi lançado por um terminal.
+// dele aparece lá prefixada com "[nome]") e não recebe stdin. Falha
+// se o pai não foi lançado por um terminal.
 int spawn(const char* path, char* const argv[]);
+
+// Bloqueia até o processo de id `pid` (o valor devolvido por spawn())
+// terminar (chamar exit() ou ser encerrado por Ctrl+C no terminal).
+// Se `out_exit_code` não for NULL, o código de saída do filho é
+// escrito ali — para um processo morto por Ctrl+C, esse valor vem
+// como (uint64_t)-1 (ver task_kill em kernel/task.c), então um
+// exit_code muito grande e "redondo" desse jeito normalmente indica
+// isso, não um retorno normal de verdade.
+//
+// Retorna 1 em sucesso, 0 se `pid` não corresponde a nenhum processo
+// (nunca existiu, ou já foi limpo porque ninguém esperou por ele a
+// tempo), ou -1 em erro (pid inválido, ou outro processo já está
+// esperando por este mesmo pid — só é suportado um waiter por vez).
+//
+// Só espera pelo id retornado por um spawn() anterior — não há
+// nenhuma verificação de que quem chama waitpid() é de fato o pai
+// daquele processo específico.
+int waitpid(int pid, unsigned long* out_exit_code);
 
 // Lê até `count` bytes do arquivo `fd` para `buf`, avançando a
 // posição de leitura. Retorna quantos bytes foram lidos de fato (0

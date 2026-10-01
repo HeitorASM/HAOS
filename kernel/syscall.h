@@ -68,7 +68,9 @@ extern "C" {
                           // aqui (não há stdout/stdin "de arquivo").
 #define SYS_SPAWN     7  // sys_spawn(const char* path, uint64_t path_len,
                           //           const char* argv_str, uint64_t argv_len)
-                          // -> 1 em sucesso, -1 em erro.
+                          // -> id do processo filho (>= 1) em sucesso,
+                          // (uint64_t)-1 em erro. Esse id é o que
+                          // SYS_WAITPID espera receber depois.
                           // Cria um NOVO processo a partir do executável
                           // HEXEC em `path` (caminho absoluto no VFS) —
                           // equivalente ao CreateProcess() do Windows /
@@ -93,7 +95,21 @@ extern "C" {
                           // ("um programa inicia outro") reaproveitando
                           // process_create, que já é exercitado por
                           // "run" no terminal.
-#define SYS_COUNT     8
+#define SYS_WAITPID   8  // sys_waitpid(uint64_t pid, uint64_t* out_exit_code)
+                          // -> 1 em sucesso (*out_exit_code preenchido,
+                          // se o ponteiro for não-NULO e válido), 0 se
+                          // `pid` não corresponde a nenhum processo
+                          // (nunca existiu ou já foi reciclado), -1 em
+                          // erro (pid == 0, ou outro processo já está
+                          // esperando por ele — só um waiter por vez).
+                          // BLOQUEIA (não retorna) até o processo `pid`
+                          // chamar sys_exit — mesmo mecanismo de
+                          // TASK_BLOCKED usado por SYS_READ em fd=0.
+                          // `pid` é o valor devolvido por SYS_SPAWN.
+                          // Não há checagem de parentesco: qualquer
+                          // processo que conheça o id pode esperar por
+                          // ele, não só quem o criou.
+#define SYS_COUNT     9
 
 // ---- Flags de sys_open (bitmask) ----
 #define O_RDONLY  0x0   // abre para leitura (comportamento padrão,

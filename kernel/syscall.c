@@ -146,21 +146,24 @@ static uint64_t sys_write(uint64_t user_ptr, uint64_t len) {
 // voltar). A pilha/imagem deste processo são liberadas depois,
 // pelo reaper (ver task_reap_zombies), não aqui.
 //
-// ATENÇÃO — por que isto é seguro apesar de syscall_entry usar uma
-// ÚNICA pilha de kernel global (syscall_stack, em syscall_asm.asm)
-// compartilhada por TODAS as syscalls de TODAS as tasks: task_exit()
-// aciona um task_switch() que empilha o contexto callee-saved desta
-// task EM CIMA dessa mesma syscall_stack global, não na pilha de
-// kernel própria da task (essa só é usada para IRQs via TSS.RSP0,
-// não para o corpo de uma syscall). Isso só não corrompe nada porque
-// esta task nunca mais vai retornar para cima dessa pilha (está
-// TASK_ZOMBIE) — nenhuma outra syscall vai rodar "por baixo" desse
-// contexto empilhado antes dele se tornar irrelevante. QUALQUER
-// outra syscall que um dia precise chamar scheduler_yield()/
-// task_switch() SEM ser um caminho sem-retorno como este teria que
-// primeiro resolver isso (dar a cada task sua própria pilha de
-// syscall, não uma global) — não fazer isso silenciosamente
-// corromperia o estado de outras tasks.
+// NOTA HISTÓRICA — isto já foi um risco real, hoje resolvido: até a
+// introdução de SYS_WAITPID, syscall_entry usava uma ÚNICA pilha de
+// kernel GLOBAL (syscall_stack, em syscall_asm.asm) compartilhada por
+// todas as syscalls de todas as tasks. Isso era seguro enquanto a
+// ÚNICA syscall que chamava scheduler_yield()/task_switch() era esta
+// (sys_exit, um caminho SEM RETORNO — a task morre e nunca mais usa
+// aquela pilha). SYS_WAITPID introduziu uma syscall que bloqueia e
+// RETORNA (sys_waitpid chama scheduler_yield() em loop, no meio do
+// próprio corpo da syscall, esperando um filho terminar) — com a
+// pilha global antiga, isso causava reentrância real: um processo
+// PAI bloqueado dentro de sys_waitpid (via scheduler_yield) e um
+// processo FILHO fazendo suas próprias syscalls ao mesmo tempo
+// usavam a MESMA pilha global, cada um sobrescrevendo o que o outro
+// tinha empilhado — travava o sistema (ver examples/launcher).
+// Corrigido dando a cada task sua PRÓPRIA pilha de kernel para o
+// corpo de qualquer syscall (current_syscall_stack_top, atualizada
+// por scheduler.c/do_switch_to a cada troca de contexto — ver
+// comentário grande em kernel/syscall_asm.asm para os detalhes).
 // ---- SYS_SBRK(increment) ----
 // Cresce (ou encolhe, se increment for negativo) a heap de usuário
 // do processo atual em `increment` bytes, mapeando/desmapeando
@@ -259,15 +262,6 @@ static int find_free_fd(task_t* t) {
     return -1;
 }
 
-// Bit alto de fd_offset[] = "este fd foi aberto com O_WRONLY". Guardado
-// aqui em vez de um campo novo em task_t porque acrescentar um array
-// de bool a task_t fez o kernel quebrar em teste real no QEMU (o
-// processo rodava mas a saída das contas nunca aparecia) — a causa
-// exata do layout não foi identificada, então evitamos mexer no
-// tamanho da struct. VFS_FILE_MAX (1 MB) usa só os 20 bits baixos.
-#define FD_WRITABLE_BIT 0x80000000u
-#define FD_OFFSET_MASK  0x7FFFFFFFu
-
 static uint64_t sys_open(uint64_t user_path_ptr, uint64_t path_len, uint64_t flags) {
     if (path_len == 0 || path_len >= SYS_OPEN_MAX_PATH) return (uint64_t)-1;
     if (!validate_user_range(user_path_ptr, path_len)) return (uint64_t)-1;
@@ -321,10 +315,18 @@ static uint64_t sys_open(uint64_t user_path_ptr, uint64_t path_len, uint64_t fla
 
     // O_TRUNC: só tem efeito se também abriu para escrita — truncar
     // num open somente-leitura seria destrutivo sem que o processo
-    // tenha declarado intenção de gravar.
+    // tenha declarado intenção de gravar. Sincroniza aqui (diferente
+    // de sys_write_fd, que só sincroniza no close — ver comentário
+    // lá) porque O_TRUNC é uma operação destrutiva pontual, não algo
+    // chamado em loop; deixar sem persistir criaria uma janela onde
+    // o disco ainda tem o conteúdo ANTIGO mas a RAM já mostra vazio
+    // — se o sistema reiniciasse nesse meio-tempo sem o processo
+    // nunca ter chegado a escrever/fechar, o próximo boot ressuscitaria
+    // dados que o programa já considerava apagados.
     if ((flags & O_WRONLY) && (flags & O_TRUNC)) {
         node->size = 0;
         if (node->data && node->capacity > 0) node->data[0] = '\0';
+        vfs_sync();
     }
 
     t->fd_table[fd]    = node;
@@ -488,6 +490,23 @@ static uint64_t sys_read(uint64_t fd, uint64_t user_buf_ptr, uint64_t count) {
 static uint64_t sys_close(uint64_t fd) {
     task_t* t = task_current();
     if (fd >= TASK_MAX_OPEN_FILES || t->fd_table[fd] == NULL) return (uint64_t)-1;
+
+    // Persistência em disco: NÃO chamamos vfs_sync() a cada
+    // sys_write_fd (haosfs_save regrava o filesystem INTEIRO do zero
+    // a cada chamada — ver comentário grande em fs/haosfs.c — então
+    // fazer isso por escrita faria um programa que grava em vários
+    // pedaços pequenos, como examples/notes, ficar extremamente lento
+    // e desgastar o disco à toa). Em vez disso, sincronizamos aqui,
+    // no close() — o ponto natural de "terminei de escrever este
+    // arquivo" — e de novo no reaper (task_reap_zombies, kernel/
+    // task.c) para não perder dados de um processo que termina sem
+    // fechar o fd explicitamente. vfs_sync() é seguro de chamar
+    // mesmo sem filesystem persistente montado (device virtual/sem
+    // disco): ela mesma verifica isso e não faz nada nesse caso.
+    if (t->fd_offset[fd] & FD_WRITABLE_BIT) {
+        vfs_sync();
+    }
+
     t->fd_table[fd]  = NULL;
     t->fd_offset[fd] = 0;
     return 0;
@@ -554,7 +573,10 @@ static uint64_t sys_spawn(uint64_t user_path_ptr, uint64_t path_len,
         task_kill(child);
         return (uint64_t)-1;
     }
-    return 1;
+    return child->id; // nunca 0 (s_next_id começa em 1) — usado por
+                       // sys_waitpid(child_id) para localizar esta
+                       // task depois, mesmo que o pai já tenha
+                       // perdido o task_t* (só guardou o id).
 }
 
 static _Noreturn uint64_t sys_exit(uint64_t code) {
@@ -566,8 +588,82 @@ static _Noreturn uint64_t sys_exit(uint64_t code) {
     // que o processo terminou até o slot inteiro ser reciclado.
     t->exit_code  = code;
     t->has_exited = true;
+
+    // Se algum processo PAI está bloqueado dentro de sys_waitpid(t)
+    // esperando exatamente por esta task (ver waiter_pid em task.h),
+    // acorda ele agora — do contrário ficaria TASK_BLOCKED para
+    // sempre, já que pick_next() nunca escolhe uma task bloqueada por
+    // conta própria (ela só volta a TASK_READY quando algo faz isso
+    // explicitamente, o mesmo padrão usado por task_stdin_write para
+    // acordar um sys_read(stdin) bloqueado).
+    if (t->waiter_pid != 0) {
+        task_t* waiter = task_find_by_id(t->waiter_pid);
+        if (waiter && waiter->state == TASK_BLOCKED) {
+            waiter->state = TASK_READY;
+        }
+    }
+
     task_exit(); // nunca retorna
     __builtin_unreachable();
+}
+
+// ---- SYS_WAITPID(pid) — espera um processo filho terminar ----
+//
+// Bloqueia (mesmo mecanismo de sys_read_stdin: TASK_BLOCKED +
+// scheduler_yield() em loop) até a task de id `pid` ter has_exited,
+// e então devolve o exit_code dela — depois disso o reaper fica
+// livre para reciclar o slot (ver waiter_pid em task.h e a checagem
+// correspondente em task_reap_zombies).
+//
+// `pid` aqui é sempre o id devolvido por sys_spawn em sucesso (nunca
+// um pid "adivinhado" por um processo não relacionado) — não há
+// nenhuma checagem de que quem chamou waitpid é de fato o pai daquela
+// task; qualquer processo que conheça o id pode esperar por ele. Não
+// é uma falha de isolamento séria nesta fase (um processo malicioso
+// no máximo consegue "roubar" a espera de outro, não ler memória
+// alheia), mas fica registrado como simplificação.
+//
+// Retorna: 1 em sucesso (com o exit_code do filho escrito em
+// *user_out_ptr, se não-NULL e o ponteiro for válido), 0 se `pid` não
+// corresponde a NENHUMA task viva (nunca existiu, ou já foi
+// totalmente reciclada — só pode acontecer se ninguém mais chamou
+// waitpid nela antes e o reaper já limpou), ou (uint64_t)-1 se o
+// próprio `pid` for inválido (0) ou já for de uma task ZUMBI
+// esperada por OUTRO waiter (waiter_pid já ocupado — esta versão só
+// suporta um único waiter por task, não um "waitpid em grupo").
+static uint64_t sys_waitpid(uint64_t pid, uint64_t user_out_ptr) {
+    if (pid == 0) return (uint64_t)-1;
+
+    task_t* self = task_current();
+    task_t* child = task_find_by_id(pid);
+    if (!child) return 0; // nunca existiu, ou já foi reciclada sem ninguém esperar
+
+    if (child->waiter_pid != 0 && child->waiter_pid != self->id) {
+        return (uint64_t)-1; // outro processo já está esperando por esta task
+    }
+    child->waiter_pid = self->id; // "reserva" a task para não ser reciclada
+                                    // (ver task_reap_zombies) até lermos o
+                                    // resultado — idempotente se já era self->id.
+
+    while (!child->has_exited) {
+        // Reconfirma a cada volta: task_find_by_id pode não achar
+        // mais a task se, por algum caminho que não passe por
+        // waiter_pid, ela tiver sido reciclada enquanto dormíamos
+        // (não deveria acontecer dado o check em task_reap_zombies,
+        // mas checar de novo é barato e evita um ponteiro obsoleto).
+        self->state = TASK_BLOCKED;
+        scheduler_yield();
+        if (task_find_by_id(pid) != child) return (uint64_t)-1; // sumiu — não deveria, mas por segurança
+    }
+
+    if (user_out_ptr != 0 && validate_user_range(user_out_ptr, sizeof(uint64_t))) {
+        uint64_t code = child->exit_code;
+        kmemcpy((void*)user_out_ptr, &code, sizeof(code));
+    }
+
+    child->waiter_pid = 0; // libera — reaper agora pode reciclar assim
+                             // que stdout_owner também estiver NULL
+    return 1;
 }
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
@@ -583,6 +679,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_CLOSE: return sys_close(a1);
         case SYS_WRITE_FD: return sys_write_fd(a1, a2, a3);
         case SYS_SPAWN: return sys_spawn(a1, a2, a3, a4);
+        case SYS_WAITPID: return sys_waitpid(a1, a2);
         default:        return (uint64_t)-1; // syscall desconhecida
     }
 }

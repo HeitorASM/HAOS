@@ -21,5 +21,10 @@ int spawn(const char* path, char* const argv[]) {
 
     long ret = haos_syscall(SYS_SPAWN, (long)path, (long)strlen(path),
                             (long)buf, blen, 0);
-    return ret == 1 ? 0 : -1;
+    // O kernel devolve o id do processo filho (sempre >= 1) em
+    // sucesso, ou (uint64_t)-1 em erro — repassamos o id diretamente
+    // (em vez de normalizar para 0) porque é ele que waitpid()
+    // precisa receber depois. ret == -1 aqui é o (uint64_t)-1 do
+    // kernel reinterpretado como long negativo — bate certo.
+    return (int)ret;
 }

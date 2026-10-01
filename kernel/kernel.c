@@ -19,6 +19,8 @@
 #include "../gui/gui.h"
 #include "../fs/vfs.h"
 
+extern void set_current_syscall_stack(uint64_t top); // syscall_asm.asm
+
 #define MB2_MAGIC  0x36D76289U
 #define MB2_TAG_FB 8
 #define MB2_TAG_END 0
@@ -47,6 +49,16 @@ static void kpanic(const char* msg) {
 void kernel_main(uint32_t magic, uint32_t mb_info_raw) {
     // GDT (agora inclui seletores de usuário + TSS)
     gdt_init();
+
+    // Valor inicial seguro para current_syscall_stack_top (ver
+    // comentário grande em kernel/syscall_asm.asm) — ANTES de
+    // qualquer processo de usuário poder existir. Na prática
+    // syscall_entry só é alcançável a partir de Ring 3, então isso
+    // seria redundante com o que scheduler.c/do_switch_to já
+    // configura na primeira troca para um processo de usuário real —
+    // mas não custa nada garantir que a variável nunca fica com o
+    // valor 0 (BSS zerado) nessa janela, por defesa.
+    set_current_syscall_stack(gdt_get_initial_kernel_stack_top());
 
     // IDT + interrupções
     idt_init();

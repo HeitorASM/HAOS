@@ -7,6 +7,7 @@
 #include "paging.h"
 
 extern void task_switch(uint64_t* old_rsp_ptr, uint64_t new_rsp);
+extern void set_current_syscall_stack(uint64_t top); // syscall_asm.asm
 
 static task_t*  s_queue_head = NULL;  // fila circular: head->next->...->head
 static uint64_t s_ticks_left = SCHEDULER_QUANTUM_TICKS;
@@ -168,6 +169,19 @@ static void do_switch_to(task_t* next) {
     // só processos de usuário derem IRETQ/SYSCALL usando RSP0.
     if (next->stack_base != 0) {
         tss_set_kernel_stack(next->stack_base + TASK_STACK_SIZE);
+
+        // Mesma correção, mesma pilha (ver comentário grande em
+        // syscall_asm.asm, junto de current_syscall_stack_top): a
+        // próxima task que assume a CPU também passa a usar sua
+        // PRÓPRIA pilha de kernel para o CORPO de qualquer syscall
+        // que ela fizer dali para frente — não mais uma pilha global
+        // compartilhada entre processos de usuário diferentes
+        // (reentrância que travava o sistema com waitpid()+spawn()
+        // concorrentes, ver examples/launcher). Só task 0 (GUI,
+        // stack_base == 0) nunca entra em Ring 3 e portanto nunca
+        // faz syscall — por isso este bloco, condicionado a
+        // stack_base != 0, nunca precisa tratar esse caso.
+        set_current_syscall_stack(next->stack_base + TASK_STACK_SIZE);
     }
 
     // ---- Fase 3: troca de espaço de endereço (CR3) ----

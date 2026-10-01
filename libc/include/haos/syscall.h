@@ -33,6 +33,7 @@ extern "C" {
 #define SYS_CLOSE  5
 #define SYS_WRITE_FD 6
 #define SYS_SPAWN 7
+#define SYS_WAITPID 8
 
 // Flags de open2() — espelham os O_* de kernel/syscall.h.
 #ifndef O_RDONLY

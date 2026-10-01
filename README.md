@@ -230,6 +230,7 @@ Para entender os fluxos de inicialização, a arquitetura visual interna e o fun
 - **Escrita de arquivos** por processos: `open2(path, O_WRONLY|O_CREAT|O_TRUNC)` + `write_fd()`
   (fds 0/1/2 são reservados; arquivos começam em fd 3)
 - **`spawn(path, argv)`** — um programa inicia outro (equivale a `CreateProcess`, NÃO é `fork`)
-- Exemplos novos em `examples/`: `calc` (calculadora), `notes` (scanf + arquivo), `launcher` (spawn)
+- **`waitpid(pid, &exit_code)`** — bloqueia até o filho criado por `spawn()` terminar
+- Exemplos novos em `examples/`: `calc` (calculadora), `notes` (scanf + arquivo), `launcher` (spawn + waitpid)
 
 Para gerar novos `.hexec` embutidos: `tools/embed_hexec.py`.
