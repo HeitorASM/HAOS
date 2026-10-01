@@ -88,6 +88,13 @@ extern "C" {
                                              // espaço de endereço de
                                              // CADA processo)
 
+// Limite máximo de .bss aceito pelo loader. bss_size vem do header do
+// arquivo (não confiável): sem um teto, um .hexec malformado poderia
+// pedir dezenas de GB de zero-fill e esgotar a memória física só no
+// process_create. Programas que precisam de mais memória devem usar
+// sbrk()/malloc() (heap sob demanda), não .bss gigante.
+#define HEXEC_MAX_BSS_SIZE (32ULL * 1024 * 1024)
+
 // ---- Header v1 (legado, ainda suportado) ----
 // Código+dados+bss como um único bloco RW+USER, sem separação de
 // seções. Ver comentário no topo do arquivo — mantido por

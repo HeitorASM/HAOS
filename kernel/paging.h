@@ -108,6 +108,13 @@ bool paging_translate(uint64_t virt_addr, uint64_t* out_phys);
 // via um ponteiro que Ring 3 forneceu.
 bool paging_is_user_page(uint64_t virt_addr);
 
+// Igual a paging_is_user_page, mas exige também que a página seja
+// GRAVÁVEL por Ring 3 (RW efetivo em todos os níveis). Use para
+// validar buffers que o KERNEL vai ESCREVER em nome do processo
+// (ex.: SYS_READ, out_exit_code de SYS_WAITPID) — escrever numa
+// página RO (.text/.rodata) a partir de Ring 0 causaria #PF no kernel.
+bool paging_is_user_writable_page(uint64_t virt_addr);
+
 // ---- Regiões com mapeamento sob demanda (demand paging) ----
 // Reserva uma faixa [virt_addr, virt_addr+size) como "válida mas
 // não mapeada". Um #PF dentro dessa faixa aloca e mapeia a página

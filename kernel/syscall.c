@@ -89,8 +89,22 @@ void syscall_init(void) {
 // com PAGE_USER (ou seja, o próprio processo tinha permissão de
 // acessá-la). Sem isso, sys_write vira uma forma de ler memória de
 // kernel arbitrária a partir de Ring 3 — uma vulnerabilidade clássica.
-static bool validate_user_range(uint64_t addr, uint64_t len) {
+//
+// CORREÇÃO (overflow): a versão anterior calculava
+// `end_page = (addr + len - 1) & ~0xFFF` sem checar overflow. Com
+// addr = 0xFFFFFFFFFFFFFF80 e len = 256, a soma dava a volta e
+// end_page virava 0 — menor que start_page — então o laço abaixo
+// NUNCA executava e a função devolvia `true` sem validar página
+// nenhuma, deixando sys_write ler memória de kernel. Agora rejeitamos
+// (a) qualquer endereço fora da metade de usuário e (b) qualquer
+// intervalo que ultrapasse o topo dessa metade, ANTES de somar.
+#define USER_SPACE_TOP 0x0000800000000000ULL
+
+static bool validate_user_range_ex(uint64_t addr, uint64_t len, bool need_write) {
     if (len == 0) return true;
+    if (addr >= USER_SPACE_TOP) return false;
+    if (len > USER_SPACE_TOP - addr) return false; // addr+len não passa do topo (e não estoura)
+
     uint64_t start_page = addr & ~(PAGE_SIZE_4K - 1);
     uint64_t end_page    = (addr + len - 1) & ~(PAGE_SIZE_4K - 1);
 
@@ -104,9 +118,25 @@ static bool validate_user_range(uint64_t addr, uint64_t len) {
         // malicioso poderia passar o endereço de alguma estrutura de
         // kernel conhecida para sys_write/sys_read e usar a syscall
         // como uma forma de ler/vazar memória de kernel arbitrária.
-        if (!paging_is_user_page(page)) return false;
+        // Para destinos que o KERNEL vai escrever, exigimos também
+        // GRAVÁVEL (ver paging_is_user_writable_page).
+        bool ok = need_write ? paging_is_user_writable_page(page)
+                             : paging_is_user_page(page);
+        if (!ok) return false;
     }
     return true;
+}
+
+// Buffer de ORIGEM (o kernel só LÊ da memória do usuário).
+static bool validate_user_range(uint64_t addr, uint64_t len) {
+    return validate_user_range_ex(addr, len, false);
+}
+
+// Buffer de DESTINO (o kernel ESCREVE na memória do usuário): precisa
+// ser gravável, senão um ponteiro para .text/.rodata causaria #PF em
+// Ring 0.
+static bool validate_user_range_writable(uint64_t addr, uint64_t len) {
+    return validate_user_range_ex(addr, len, true);
 }
 
 // ---- SYS_WRITE(ptr, len) ----
@@ -356,6 +386,7 @@ static uint64_t sys_write_fd(uint64_t fd, uint64_t user_buf_ptr, uint64_t count)
     if (!validate_user_range(user_buf_ptr, count)) return (uint64_t)-1;
 
     VfsNode* node = t->fd_table[fd];
+    if (node->removed) return (uint64_t)-1; // arquivo apagado com o fd aberto
     uint64_t offset = t->fd_offset[fd] & FD_OFFSET_MASK;
 
     // Checa overflow/limite ANTES de alocar: offset+count precisa
@@ -406,7 +437,6 @@ static uint64_t sys_write_fd(uint64_t fd, uint64_t user_buf_ptr, uint64_t count)
 // ex. spurious wakeup), bloqueia de novo em vez de assumir sucesso.
 static uint64_t sys_read_stdin(task_t* t, uint64_t user_buf_ptr, uint64_t count) {
     if (count == 0) return 0;
-    if (!validate_user_range(user_buf_ptr, count)) return (uint64_t)-1;
 
     #define SYS_READ_STDIN_MAX_LEN 64 // uma tecla de cada vez é o caso
                                         // comum; um chunk pequeno também
@@ -416,6 +446,10 @@ static uint64_t sys_read_stdin(task_t* t, uint64_t user_buf_ptr, uint64_t count)
                                         // de arquivo, abaixo.
     uint8_t buf[SYS_READ_STDIN_MAX_LEN];
     uint64_t want = count < SYS_READ_STDIN_MAX_LEN ? count : SYS_READ_STDIN_MAX_LEN;
+
+    // Só `want` bytes (no máximo) serão escritos no buffer do usuário
+    // — validamos exatamente isso, e exigindo página GRAVÁVEL.
+    if (!validate_user_range_writable(user_buf_ptr, want)) return (uint64_t)-1;
 
     for (;;) {
         uint64_t n = task_stdin_read(t, buf, want);
@@ -456,14 +490,22 @@ static uint64_t sys_read(uint64_t fd, uint64_t user_buf_ptr, uint64_t count) {
     // sys_write) e lendo em BLOCOS quando `count` pede mais que isso
     // — mais chamadas de loop, mas cada uma com pilha previsível.
     #define SYS_READ_MAX_LEN 512
-    if (!validate_user_range(user_buf_ptr, count)) return (uint64_t)-1;
 
     VfsNode* node = t->fd_table[fd];
+    // Arquivo removido (rm) enquanto este fd estava aberto: o nó em
+    // si continua alocado (o VFS não libera nós — ver vfs.c), mas o
+    // conteúdo já foi liberado. Nunca acessar node->data nesse caso.
+    if (node->removed || !node->data) return (uint64_t)-1;
+
     uint32_t offset = t->fd_offset[fd] & FD_OFFSET_MASK;
     if (offset >= node->size) return 0; // fim de arquivo
 
     uint32_t available = node->size - offset;
     uint64_t total_to_copy = count < available ? count : available;
+
+    // Valida só o trecho que de fato será escrito, e exige página
+    // GRAVÁVEL (um buffer em .text/.rodata causaria #PF no kernel).
+    if (!validate_user_range_writable(user_buf_ptr, total_to_copy)) return (uint64_t)-1;
 
     uint8_t buf[SYS_READ_MAX_LEN];
     uint64_t copied = 0;
@@ -656,7 +698,7 @@ static uint64_t sys_waitpid(uint64_t pid, uint64_t user_out_ptr) {
         if (task_find_by_id(pid) != child) return (uint64_t)-1; // sumiu — não deveria, mas por segurança
     }
 
-    if (user_out_ptr != 0 && validate_user_range(user_out_ptr, sizeof(uint64_t))) {
+    if (user_out_ptr != 0 && validate_user_range_writable(user_out_ptr, sizeof(uint64_t))) {
         uint64_t code = child->exit_code;
         kmemcpy((void*)user_out_ptr, &code, sizeof(code));
     }

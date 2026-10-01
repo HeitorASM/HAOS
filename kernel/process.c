@@ -86,8 +86,13 @@ static bool parse_hexec_header(VfsNode* file, hexec_info_t* out) {
 
         uint64_t available = file->size - sizeof(hdr);
         if (hdr.code_size > available) return false;
-        uint64_t image_total = hdr.code_size + hdr.bss_size;
-        if (image_total == 0 || hdr.entry_offset >= image_total) return false;
+        // bss_size vem do arquivo (não confiável): limitamos ANTES de
+        // qualquer soma para não haver overflow de uint64 nem pedido
+        // de memória absurdo (ver HEXEC_MAX_BSS_SIZE em hexec.h).
+        if (hdr.bss_size > HEXEC_MAX_BSS_SIZE) return false;
+        // O ponto de entrada precisa cair dentro do CÓDIGO presente no
+        // arquivo, não no bss zerado depois dele.
+        if (hdr.code_size == 0 || hdr.entry_offset >= hdr.code_size) return false;
 
         out->version       = HEXEC_VERSION_1;
         out->entry_offset  = hdr.entry_offset;
@@ -112,15 +117,27 @@ static bool parse_hexec_header(VfsNode* file, hexec_info_t* out) {
         if ((hdr.rodata_size % PAGE_SIZE_4K) != 0) return false;
         if ((hdr.data_size   % PAGE_SIZE_4K) != 0) return false;
 
+        // Os três tamanhos vêm do arquivo (não confiável). Somá-los de
+        // uma vez (text + rodata + data) podia dar a volta em uint64 e
+        // passar na checagem de `available` com um valor pequeno,
+        // enquanto o loader depois mapearia páginas pelos tamanhos
+        // ORIGINAIS enormes. Subtraímos de `available` passo a passo,
+        // então nenhuma operação aqui consegue estourar.
         uint64_t available = file->size - sizeof(hdr);
-        uint64_t file_total = hdr.text_size + hdr.rodata_size + hdr.data_size;
-        if (file_total > available) return false;
+        if (hdr.text_size > available) return false;
+        uint64_t remaining = available - hdr.text_size;
+        if (hdr.rodata_size > remaining) return false;
+        remaining -= hdr.rodata_size;
+        if (hdr.data_size > remaining) return false;
 
-        uint64_t image_total = file_total + hdr.bss_size;
-        if (image_total == 0 || hdr.entry_offset >= image_total) return false;
+        // .bss não ocupa espaço no arquivo, então não é limitado por
+        // `available` — precisa de teto próprio (ver hexec.h).
+        if (hdr.bss_size > HEXEC_MAX_BSS_SIZE) return false;
+
         // entry_offset precisa cair dentro de .text — não faz
         // sentido (e seria um sinal de arquivo malformado ou
         // malicioso) o ponto de entrada apontar para .rodata/.data/.bss.
+        // (Também cobre text_size == 0: nenhum entry_offset é < 0.)
         if (hdr.entry_offset >= hdr.text_size) return false;
 
         out->version       = HEXEC_VERSION_2;

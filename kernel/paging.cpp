@@ -193,24 +193,62 @@ static bool translate_page(pte_t* pml4, uint64_t virt_addr, uint64_t* out_phys) 
     return true;
 }
 
-// Igual a translate_page, mas retorna se a página está mapeada COM
-// o bit PAGE_USER (bit 2) — usado por validate_user_range em
-// syscall.c para garantir que um ponteiro vindo de Ring 3 aponta
-// para memória que o PRÓPRIO processo tinha permissão de acessar,
-// não para uma página de kernel só porque ela "por acaso" está
-// mapeada em algum endereço que o processo escolheu passar.
-static bool is_user_page(pte_t* pml4, uint64_t virt_addr) {
-    if (!pml4) return false;
-    pte_t* pdpt = (pml4[pml4_index(virt_addr)] & 1) ? (pte_t*)(pml4[pml4_index(virt_addr)] & ADDR_MASK) : nullptr;
-    if (!pdpt) return false;
-    pte_t* pd = (pdpt[pdpt_index(virt_addr)] & 1) ? (pte_t*)(pdpt[pdpt_index(virt_addr)] & ADDR_MASK) : nullptr;
-    if (!pd) return false;
-    pte_t* pt = (pd[pd_index(virt_addr)] & 1) ? (pte_t*)(pd[pd_index(virt_addr)] & ADDR_MASK) : nullptr;
-    if (!pt) return false;
+// Metade inferior do espaço de endereço (canônica) — tudo a partir
+// daqui é do kernel/não-canônico e NUNCA pode ser tratado como
+// memória de usuário, mesmo que alguma tabela de páginas aponte para
+// lá. Rejeitar cedo também evita que bits altos de um endereço
+// malicioso (63:48) sejam simplesmente ignorados pelos pml4_index()
+// & cia. e "aliasem" para uma página de usuário legítima.
+static constexpr uint64_t USER_VADDR_LIMIT = 0x0000800000000000ULL;
+static constexpr uint64_t PTE_PS           = 1ULL << 7; // página grande (2MB/1GB)
 
-    uint32_t idx = pt_index(virt_addr);
-    if (!(pt[idx] & 1)) return false; // não presente
-    return (pt[idx] & (1ULL << 2)) != 0; // bit US (User/Supervisor)
+// Retorna se a página está mapeada, acessível a Ring 3 e — se
+// `need_write` — também GRAVÁVEL por Ring 3. Usado por validate_user_range
+// (syscall.c) para garantir que um ponteiro vindo de Ring 3 aponta
+// para memória que o PRÓPRIO processo tinha permissão de acessar, não
+// para uma página de kernel só porque ela "por acaso" está mapeada.
+//
+// As permissões efetivas no x86_64 são a INTERSEÇÃO (AND) dos bits
+// US e RW de TODOS os níveis da tradução, não só do PTE final — é
+// exatamente o que o hardware faz, então acumulamos `acc` descendo a
+// árvore. Também paramos no nível correto quando há página grande
+// (bit PS): antes, uma entrada de PD com PS=1 era tratada como se
+// apontasse para uma page table, lendo memória física arbitrária como
+// se fosse PTE.
+//
+// need_write=true é o que as syscalls que ESCREVEM no buffer do
+// usuário (read, waitpid) precisam: sem isso, passar um ponteiro para
+// .text/.rodata (mapeados sem PAGE_WRITABLE) faria o kernel tomar
+// #PF em Ring 0 ao copiar para lá.
+static bool is_user_page(pte_t* pml4, uint64_t virt_addr, bool need_write) {
+    if (!pml4) return false;
+    if (virt_addr >= USER_VADDR_LIMIT) return false;
+
+    uint64_t acc = PAGE_USER | PAGE_WRITABLE;
+
+    uint64_t e = pml4[pml4_index(virt_addr)];
+    if (!(e & PAGE_PRESENT)) return false;
+    acc &= e;
+
+    e = ((pte_t*)(e & ADDR_MASK))[pdpt_index(virt_addr)];
+    if (!(e & PAGE_PRESENT)) return false;
+    acc &= e;
+
+    if (!(e & PTE_PS)) {                       // não é página de 1GB
+        e = ((pte_t*)(e & ADDR_MASK))[pd_index(virt_addr)];
+        if (!(e & PAGE_PRESENT)) return false;
+        acc &= e;
+
+        if (!(e & PTE_PS)) {                   // não é página de 2MB
+            e = ((pte_t*)(e & ADDR_MASK))[pt_index(virt_addr)];
+            if (!(e & PAGE_PRESENT)) return false;
+            acc &= e;
+        }
+    }
+
+    if (!(acc & PAGE_USER)) return false;
+    if (need_write && !(acc & PAGE_WRITABLE)) return false;
+    return true;
 }
 
 // ---- Identity-mapeia 0..limit_bytes inteiro, granularidade 4KB ----
@@ -339,7 +377,13 @@ bool paging_translate(uint64_t virt_addr, uint64_t* out_phys) {
 // Ver comentário em is_user_page (acima) — checa o bit PAGE_USER da
 // página no espaço de endereço ATIVO agora.
 bool paging_is_user_page(uint64_t virt_addr) {
-    return is_user_page(s_active_pml4, virt_addr);
+    return is_user_page(s_active_pml4, virt_addr, false);
+}
+
+// Igual a paging_is_user_page, mas exige também que a página seja
+// GRAVÁVEL por Ring 3 — para buffers de destino em syscalls.
+bool paging_is_user_writable_page(uint64_t virt_addr) {
+    return is_user_page(s_active_pml4, virt_addr, true);
 }
 
 bool paging_map_in(address_space_t* as, uint64_t virt_addr, uint64_t phys_addr, uint64_t flags) {

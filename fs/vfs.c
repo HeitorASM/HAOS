@@ -336,6 +336,19 @@ static bool vfs_remove_node(VfsNode* node) {
         kfree(node->data);
         node->data = NULL;
     }
+
+    // Deixa o nó num estado "tombstone" consistente. O nó em si não
+    // é liberado (limitação conhecida do VFS — ver comentário no topo
+    // do arquivo), então ponteiros antigos para ele (fd_table de
+    // processos com o arquivo aberto) continuam apontando para
+    // memória válida. Antes, `data` virava NULL mas `size` e
+    // `capacity` ficavam com os valores antigos — um sys_read num fd
+    // ainda aberto calcularia `node->data + offset` com data == NULL
+    // e leria memória baixa do kernel. Agora size/capacity zeram e o
+    // flag `removed` permite às syscalls recusarem o acesso.
+    node->size     = 0;
+    node->capacity = 0;
+    node->removed  = true;
     return true;
 }
 

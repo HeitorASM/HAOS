@@ -24,6 +24,12 @@ typedef struct VfsNode {
     struct VfsNode* parent;
     struct VfsNode* children[VFS_MAX_CHILDREN];
     uint32_t        child_count;
+    bool            removed;                // true depois de vfs_rm: o nó em si NÃO é liberado
+                                            // (pode haver ponteiros pendurados — ex.: fd_table
+                                            // de um processo que tinha o arquivo aberto), mas
+                                            // `data` já foi liberado e `size`/`capacity` zerados.
+                                            // Quem guarda VfsNode* por tempo indefinido deve
+                                            // checar este campo antes de usar `data`.
 } VfsNode;
 
 // ---- API pública --------------------------------------------
