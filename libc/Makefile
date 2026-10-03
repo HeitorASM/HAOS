@@ -60,6 +60,7 @@ C_SRCS = src/unistd/write.c   \
          src/unistd/waitpid.c \
          src/unistd/proc.c    \
          src/unistd/fsops.c   \
+         src/gfx/window.c     \
          src/stdlib/exit.c    \
          src/stdlib/malloc.c  \
          src/stdio/printf.c   \

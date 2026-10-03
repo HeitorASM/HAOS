@@ -96,6 +96,7 @@ CXX_SRCS = kernel/memory.cpp      \
            gui/core/layout.cpp    \
            gui/core/window.cpp    \
            gui/core/wm.cpp        \
+           gui/core/userwin.cpp   \
            gui/widgets_basic.cpp  \
            gui/widgets_input.cpp  \
            gui/gui.cpp            \

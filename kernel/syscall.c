@@ -24,6 +24,7 @@
 #include "process.h"
 #include "scheduler.h"
 #include "../fs/vfs.h"
+#include "../gui/core/userwin.h"
 
 extern void syscall_entry(void); // definido em syscall_asm.asm
 extern volatile uint64_t timer_ticks; // idt_asm.asm — incrementado a 100 Hz (IRQ0)
@@ -889,6 +890,119 @@ static uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
     return (uint64_t)pos;
 }
 
+// ============================================================
+//  Syscalls 20..26 — janelas gráficas (ver gui/core/userwin.cpp)
+//
+//  Esta camada só valida ponteiros de usuário e copia dados para
+//  estruturas do kernel; quem manipula janelas é userwin_*, que não
+//  conhece memória de usuário (exceto o `pixels` do blit, já
+//  validado aqui). `handle` vindo do usuário é tratado como int64:
+//  valores "negativos" (>= 2^63) são recusados por userwin_*.
+// ============================================================
+
+#define SYS_WIN_TITLE_MAX     63
+#define SYS_WIN_TEXT_MAX      255
+#define SYS_WIN_BLIT_MAX_BYTES (16u * 1024u * 1024u)  // 16 MB por blit
+#define SYS_WIN_WAIT_FOREVER  0xFFFFFFFFull
+
+static uint64_t sys_win_create(uint64_t w, uint64_t h,
+                               uint64_t user_title_ptr, uint64_t title_len) {
+    if (w > USERWIN_MAX_DIM || h > USERWIN_MAX_DIM) return (uint64_t)-1;
+
+    char title[SYS_WIN_TITLE_MAX + 1];
+    uint64_t n = 0;
+    if (user_title_ptr != 0 && title_len > 0) {
+        n = title_len > SYS_WIN_TITLE_MAX ? SYS_WIN_TITLE_MAX : title_len;
+        if (!validate_user_range(user_title_ptr, n)) return (uint64_t)-1;
+        kmemcpy(title, (const void*)user_title_ptr, n);
+    }
+    title[n] = '\0';   // userwin_create troca título vazio por "App"
+
+    return (uint64_t)userwin_create(task_current()->id, (uint32_t)w, (uint32_t)h, title);
+}
+
+static uint64_t sys_win_destroy(uint64_t handle) {
+    return userwin_destroy(task_current()->id, (int64_t)handle) == 0 ? 0 : (uint64_t)-1;
+}
+
+static uint64_t sys_win_fill(uint64_t handle, uint64_t user_rect_ptr) {
+    haos_win_rect_t r;
+    if (!validate_user_range(user_rect_ptr, sizeof(r))) return (uint64_t)-1;
+    kmemcpy(&r, (const void*)user_rect_ptr, sizeof(r));
+    return userwin_fill(task_current()->id, (int64_t)handle, &r) == 0 ? 0 : (uint64_t)-1;
+}
+
+static uint64_t sys_win_text(uint64_t handle, uint64_t user_text_ptr) {
+    haos_win_text_t t;
+    if (!validate_user_range(user_text_ptr, sizeof(t))) return (uint64_t)-1;
+    kmemcpy(&t, (const void*)user_text_ptr, sizeof(t));
+
+    if (t.len > SYS_WIN_TEXT_MAX) t.len = SYS_WIN_TEXT_MAX;
+    char buf[SYS_WIN_TEXT_MAX + 1];
+    if (t.len > 0) {
+        if (!validate_user_range(t.text_ptr, t.len)) return (uint64_t)-1;
+        kmemcpy(buf, (const void*)t.text_ptr, t.len);
+    }
+    buf[t.len] = '\0';
+
+    return userwin_text(task_current()->id, (int64_t)handle, t.x, t.y,
+                        t.fg, t.bg, t.flags, buf, t.len) == 0 ? 0 : (uint64_t)-1;
+}
+
+static uint64_t sys_win_blit(uint64_t handle, uint64_t user_blit_ptr) {
+    haos_win_blit_t b;
+    if (!validate_user_range(user_blit_ptr, sizeof(b))) return (uint64_t)-1;
+    kmemcpy(&b, (const void*)user_blit_ptr, sizeof(b));
+
+    if (b.w <= 0 || b.h <= 0 || b.w > USERWIN_MAX_DIM || b.h > USERWIN_MAX_DIM)
+        return (uint64_t)-1;
+    uint64_t bytes = (uint64_t)b.w * (uint64_t)b.h * 4u;   // <= 4096*4096*4: não estoura
+    if (bytes > SYS_WIN_BLIT_MAX_BYTES) return (uint64_t)-1;
+    if (!validate_user_range(b.pixels_ptr, bytes)) return (uint64_t)-1;
+
+    return userwin_blit(task_current()->id, (int64_t)handle, b.x, b.y, b.w, b.h,
+                        (const uint32_t*)b.pixels_ptr) == 0 ? 0 : (uint64_t)-1;
+}
+
+// Espera por um evento cedendo a CPU em laço (mesmo padrão de SYS_SLEEP_MS:
+// as syscalls entram com IF=0, o tempo avança porque a GUI continua
+// rodando). NÃO guarda ponteiro de janela entre as voltas — a cada
+// iteração userwin_poll refaz o lookup pelo handle, pois o usuário pode
+// fechar a janela (X) enquanto estamos cedendo a CPU.
+static uint64_t sys_win_event(uint64_t handle, uint64_t user_out_ptr, uint64_t timeout_ms) {
+    if (!validate_user_range_writable(user_out_ptr, sizeof(haos_win_event_t)))
+        return (uint64_t)-1;
+
+    uint64_t id = task_current()->id;
+    int forever = (timeout_ms == SYS_WIN_WAIT_FOREVER);
+    uint64_t deadline = 0;
+    if (!forever) {
+        if (timeout_ms > SYS_SLEEP_MAX_MS) timeout_ms = SYS_SLEEP_MAX_MS;
+        deadline = timer_ticks + (timeout_ms + SYS_MS_PER_TICK - 1) / SYS_MS_PER_TICK;
+    }
+
+    for (;;) {
+        haos_win_event_t ev;
+        int r = userwin_poll(id, (int64_t)handle, &ev);
+        if (r < 0) return (uint64_t)-1;                 // janela fechada/inexistente
+        if (r > 0) {
+            kmemcpy((void*)user_out_ptr, &ev, sizeof(ev));
+            return 1;
+        }
+        if (!forever && timer_ticks >= deadline) return 0;  // timeout (0 = só consulta)
+        scheduler_yield();
+    }
+}
+
+static uint64_t sys_win_info(uint64_t handle, uint64_t user_out_ptr) {
+    if (!validate_user_range_writable(user_out_ptr, sizeof(haos_win_info_t)))
+        return (uint64_t)-1;
+    haos_win_info_t info;
+    if (userwin_info(task_current()->id, (int64_t)handle, &info) != 0) return (uint64_t)-1;
+    kmemcpy((void*)user_out_ptr, &info, sizeof(info));
+    return 0;
+}
+
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a5; // SYS_SPAWN usa até a4; nenhuma syscall usa a5 ainda
@@ -914,6 +1028,13 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_MKDIR:     return sys_mkdir(a1, a2);
         case SYS_UNLINK:    return sys_unlink(a1, a2);
         case SYS_LSEEK:     return sys_lseek(a1, a2, a3);
+        case SYS_WIN_CREATE:  return sys_win_create(a1, a2, a3, a4);
+        case SYS_WIN_DESTROY: return sys_win_destroy(a1);
+        case SYS_WIN_FILL:    return sys_win_fill(a1, a2);
+        case SYS_WIN_TEXT:    return sys_win_text(a1, a2);
+        case SYS_WIN_BLIT:    return sys_win_blit(a1, a2);
+        case SYS_WIN_EVENT:   return sys_win_event(a1, a2, a3);
+        case SYS_WIN_INFO:    return sys_win_info(a1, a2);
         default:        return (uint64_t)-1; // syscall desconhecida
     }
 }

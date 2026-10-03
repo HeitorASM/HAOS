@@ -43,6 +43,7 @@ O HAOS é um sistema operacional bare-metal de 64 bits desenvolvido de forma ind
 - **Taskbar:** Barra de tarefas com botão Iniciar, clock em tempo real e indicador da janela ativa.
 - **Menu Iniciar:** Menu pop-up com acesso a aplicativos e opção de reinicialização.
 - **Menu de contexto do desktop:** Botão direito sobre a área livre abre Terminal, Editor, Arquivos, Configurações e Sobre.
+- **Janelas para programas Ring 3 (`SYS_WIN_*`):** Um `.hexec` pode criar janelas (`win_create`), desenhar num canvas próprio (retângulos, texto com a fonte do sistema, blit de pixels) e receber teclado/mouse/redimensionamento como eventos (`win_event`), usando a API de `libc/include/haos/gfx.h`. A janela se integra ao WM (foco, mover, redimensionar, maximizar, snap, Alt+Tab) e é fechada automaticamente se o processo morrer. Exemplo: `examples/winpaint/`.
 - **Explorador de Arquivos:** Navegação pela árvore VFS, retorno ao diretório pai ou à raiz, seleção de itens e abertura de arquivos textuais no Bloco de Notas por duplo clique.
 - **Sistema de Wallpaper:** Suporte a gradiente padrão ou imagens convertidas, com três modos de exibição — Preencher, Centralizar e Lado a lado.
 - **Cursor de Mouse:** Cursor renderizado em hardware com atualização por frame.

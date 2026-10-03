@@ -420,6 +420,12 @@ task_t* task_current(void);
 // ainda não foi reciclado.
 task_t* task_find_by_id(uint64_t id);
 
+// true se existe uma task com este id que ainda NÃO terminou (nem
+// TASK_UNUSED, nem TASK_ZOMBIE). Ao contrário de task_find_by_id,
+// zumbis contam como "mortos" — é o que o código da GUI quer para
+// decidir se deve fechar as janelas de um processo (userwin_reap).
+bool task_is_alive(uint64_t id);
+
 // Usado internamente pelo scheduler para atualizar qual task é a
 // "atual" logo após uma troca de contexto bem-sucedida. Não chame
 // isso fora de scheduler.c.

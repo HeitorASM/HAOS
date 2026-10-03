@@ -5,6 +5,7 @@
 #include "../elements/taskbar.h"
 #include "../elements/startmenu.h"
 #include "../elements/contextmenu.h"
+#include "../core/userwin.h"
 #include "../apps/terminal.h"
 #include "../apps/about.h"
 #include "../apps/config.h"
@@ -286,6 +287,11 @@ extern "C" void run_desktop(void) {
         // throttle sempre pulasse essa parte) — o usuário veria o
         // duplo-clique simplesmente não fazer nada.
         wm_run_deferred_actions();
+
+        // Fecha janelas de processos de usuário que terminaram (ou que
+        // pediram SYS_WIN_DESTROY). Tem que ser AQUI, na task da GUI:
+        // a destruição de uma janela nunca ocorre dentro da syscall.
+        userwin_reap();
 
         if (ticks - last_render_tick < 2) {
             __asm__("pause");

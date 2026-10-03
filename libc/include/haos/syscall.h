@@ -45,6 +45,13 @@ extern "C" {
 #define SYS_MKDIR     17
 #define SYS_UNLINK    18
 #define SYS_LSEEK     19
+#define SYS_WIN_CREATE  20
+#define SYS_WIN_DESTROY 21
+#define SYS_WIN_FILL    22
+#define SYS_WIN_TEXT    23
+#define SYS_WIN_BLIT    24
+#define SYS_WIN_EVENT   25
+#define SYS_WIN_INFO    26
 
 // Flags de open2() — espelham os O_* de kernel/syscall.h.
 #ifndef O_RDONLY

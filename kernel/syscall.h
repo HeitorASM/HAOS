@@ -144,7 +144,28 @@ extern "C" {
 #define SYS_LSEEK     19 // sys_lseek(int fd, int64_t offset, int whence) -> nova
                           // posição (>= 0) ou -1. Só para fds de arquivo (>= 3).
                           // Posição fica limitada a [0, VFS_FILE_MAX].
-#define SYS_COUNT     20
+// ---- Janelas gráficas (Ring 3) ----
+// Um processo cria janelas com um canvas de pixels próprio; desenha
+// nele por syscalls e recebe teclado/mouse como eventos. Detalhes e
+// as structs de troca: gui/core/userwin.h (espelhadas em
+// libc/include/haos/gfx.h). `handle` é um inteiro pequeno (>= 0) que só
+// vale para o processo que criou a janela. Todas devolvem -1 se o
+// handle é inválido OU a janela já foi fechada (pelo usuário, no X) —
+// é assim que o programa descobre que deve encerrar.
+#define SYS_WIN_CREATE  20 // sys_win_create(w, h, title, title_len) -> handle ou -1.
+                            // w,h = tamanho da ÁREA CLIENTE (o kernel ajusta a
+                            // limites razoáveis; use SYS_WIN_INFO p/ saber o real).
+                            // No máx. 4 janelas por processo.
+#define SYS_WIN_DESTROY 21 // sys_win_destroy(handle) -> 0 ou -1.
+#define SYS_WIN_FILL    22 // sys_win_fill(handle, haos_win_rect_t*) -> 0 ou -1.
+#define SYS_WIN_TEXT    23 // sys_win_text(handle, haos_win_text_t*) -> 0 ou -1.
+#define SYS_WIN_BLIT    24 // sys_win_blit(handle, haos_win_blit_t*) -> 0 ou -1.
+#define SYS_WIN_EVENT   25 // sys_win_event(handle, haos_win_event_t* out, timeout_ms)
+                            // -> 1 (evento), 0 (nenhum/timeout) ou -1 (janela
+                            // inexistente/fechada). timeout_ms = 0 só consulta;
+                            // 0xFFFFFFFF espera para sempre.
+#define SYS_WIN_INFO    26 // sys_win_info(handle, haos_win_info_t* out) -> 0 ou -1.
+#define SYS_COUNT     27
 
 // ---- whence de sys_lseek ----
 #define SEEK_SET  0

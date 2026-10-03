@@ -139,6 +139,11 @@ task_t* task_find_by_id(uint64_t id) {
     return NULL;
 }
 
+bool task_is_alive(uint64_t id) {
+    task_t* t = task_find_by_id(id);
+    return t != NULL && t->state != TASK_ZOMBIE;
+}
+
 // Usado pelo scheduler para atualizar qual é a task "atual" sem
 // expor s_current diretamente (o scheduler decide QUEM roda; o
 // task.c só guarda o estado).

@@ -16,6 +16,13 @@ usando esta libc mínima e freestanding.
     do diretório de trabalho **do processo** (herdado do terminal/pai)
   - Memória: `sbrk()`
   - Estruturas (`struct haos_stat`, `struct haos_dirent`): `haos/fs.h`
+- **`haos/gfx.h`**: janelas gráficas para programas Ring 3 —
+  `win_create()`, `win_destroy()`, `win_size()`, `win_fill_rect()`,
+  `win_text()`/`win_text_bg()`, `win_blit()` e o laço de eventos
+  `win_event()` (teclado, mouse, redimensionamento). O programa desenha
+  num canvas que pertence ao kernel; o WM só o exibe dentro da moldura.
+  `win_event()` devolve `-1` quando o usuário fecha a janela (X) — é o
+  sinal para o programa encerrar. Exemplo: `examples/winpaint/`.
 - **`stdlib.h`**: `exit()`, `malloc()`, `free()`, `realloc()`
 - **`string.h`**: `memcpy`, `memset`, `memmove`, `memcmp`, `strlen`,
   `strcpy`, `strncpy`, `strcat`, `strcmp`, `strncmp`

@@ -10,6 +10,16 @@
 #include "../kernel/generated/launcher_hexec_data.h"
 #include "../kernel/generated/systest_hexec_data.h"
 #include "../kernel/generated/ls_hexec_data.h"
+
+// winpaint (janela gráfica Ring 3) só entra se o header GERADO existir —
+// ele é criado por `bash tools/build_apps.sh`. Assim o kernel compila
+// mesmo antes de os apps terem sido gerados.
+#if defined(__has_include)
+#  if __has_include("../kernel/generated/winpaint_hexec_data.h")
+#    include "../kernel/generated/winpaint_hexec_data.h"
+#    define HAVE_WINPAINT_HEXEC 1
+#  endif
+#endif
 // Sistema de arquivos virtual que roda na RAM do OS.
 // Arquivos crescem dinamicamente (dobra de capacidade) até VFS_FILE_MAX,
 // e diretórios suportam até VFS_MAX_CHILDREN itens.
@@ -77,6 +87,7 @@ static bool vfs_add_child(VfsNode* parent, VfsNode* child) {
 //   launcher  — spawn() + waitpid()
 //   systest   — autoteste das syscalls 9..19 e das correções de segurança
 //   ls        — lista diretórios (SYS_READDIR/SYS_STAT)
+//   winpaint  — janela gráfica Ring 3 (SYS_WIN_*); só se o header existir
 typedef struct {
     const char*          name;
     const unsigned char* data;
@@ -92,6 +103,9 @@ static const BuiltinBin g_builtin_bins[] = {
     { "launcher.hexec",   launcher_hexec_data,   LAUNCHER_HEXEC_SIZE   },
     { "systest.hexec",    systest_hexec_data,    SYSTEST_HEXEC_SIZE    },
     { "ls.hexec",         ls_hexec_data,         LS_HEXEC_SIZE         },
+#ifdef HAVE_WINPAINT_HEXEC
+    { "winpaint.hexec",   winpaint_hexec_data,   WINPAINT_HEXEC_SIZE   },
+#endif
 };
 
 static bool bytes_equal(const void* a, const void* b, uint32_t n) {

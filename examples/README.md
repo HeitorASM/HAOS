@@ -23,6 +23,21 @@ arquivo longo, ponteiro de kernel que "dá a volta", buffer somente
 leitura). **Rode depois de qualquer mudança em syscalls**:
 `run systest.hexec` — o resultado esperado termina com `TUDO OK`.
 
+## winpaint/ — janela gráfica (SYS_WIN_*)
+
+Mini editor de desenho em uma janela própria, criada por um programa
+Ring 3: `run winpaint.hexec`. Arraste com o botão esquerdo para desenhar,
+clique numa cor (ou tecle `1`..`8`) para trocar, `c` limpa, `q` sai.
+Mostra o ciclo completo: `win_create`, desenho (`win_fill_rect`,
+`win_text_bg`), laço de eventos (`win_event`) e como reagir a mouse,
+teclado, redimensionamento e ao fechamento da janela pelo X.
+
+**Não vem pré-compilado**: gere com `bash tools/build_apps.sh` (compila a
+libc, o systest, o ls e o winpaint, e cria os headers em
+`kernel/generated/`) e depois `make` no kernel — o `winpaint.hexec` entra
+em `/bin` no boot. (Sem o header gerado, o kernel simplesmente compila
+sem ele.)
+
 ## ls/ — lista diretórios
 
 `run ls.hexec` (diretório atual), `run ls.hexec /bin`,

@@ -11,6 +11,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "haos/syscall.h"
+#include "haos/gfx.h"
 
 static int g_fail = 0;
 
@@ -130,6 +131,42 @@ int main(void) {
     // Destino somente-leitura (.text): validacao ANTES de bloquear em stdin.
     check("read(stdin) em buffer RO (.text) == -1",
           read(0, (void*)main, 1) == -1);
+
+    // ---- Janelas graficas (SYS_WIN_*) ----
+    // Cria uma janelinha de verdade (some sozinha ao final). Precisa de
+    // vaga no WM (MAX_WINDOWS): se falhar aqui, feche alguma janela.
+    puts("== janelas (SYS_WIN_*) ==");
+    int w = win_create(200, 120, "systest");
+    check("win_create devolve handle >= 0", w >= 0);
+
+    unsigned ww = 0, wh = 0;
+    check("win_size == 200x120", win_size(w, &ww, &wh) == 0 && ww == 200 && wh == 120);
+    check("win_fill_rect", win_fill_rect(w, 0, 0, 200, 120, 0x203060) == 0);
+    check("win_fill_rect gigante e fora do canvas e recortado",
+          win_fill_rect(w, -50, -50, 100000, 100000, 0x203060) == 0);
+    check("win_text_bg", win_text_bg(w, 8, 8, "systest: janela ok", 0xFFFFFF, 0x203060) == 0);
+
+    uint32_t px[16];
+    for (int k = 0; k < 16; k++) px[k] = 0xFF8800;
+    check("win_blit 4x4", win_blit(w, 10, 40, 4, 4, px) == 0);
+    check("win_blit parcialmente fora do canvas", win_blit(w, -2, -2, 4, 4, px) == 0);
+
+    struct haos_win_event wev;
+    check("win_event sem eventos (consulta) == 0", win_event(w, &wev, 0) == 0);
+    unsigned long tw0 = uptime_ms();
+    check("win_event com timeout 100 ms == 0 e espera >= 100 ms",
+          win_event(w, &wev, 100) == 0 && uptime_ms() - tw0 >= 100);
+
+    check("handle inexistente == -1", win_fill_rect(15, 0, 0, 1, 1, 0) == -1);
+    check("handle negativo == -1", win_fill_rect(-1, 0, 0, 1, 1, 0) == -1);
+    check("win_blit com ponteiro de kernel (wraparound) == -1",
+          win_blit(w, 0, 0, 4, 4, (const uint32_t*)0xFFFFFFFFFFFFFF80UL) == -1);
+    check("win_event com destino somente-leitura (.text) == -1",
+          win_event(w, (struct haos_win_event*)(void*)main, 0) == -1);
+
+    check("win_destroy == 0", win_destroy(w) == 0);
+    check("handle destruido == -1", win_fill_rect(w, 0, 0, 1, 1, 0) == -1);
+    check("win_destroy repetido == -1", win_destroy(w) == -1);
 
     printf("== %s (%d falha(s)) ==\n", g_fail == 0 ? "TUDO OK" : "HOUVE FALHAS", g_fail);
     return g_fail;
