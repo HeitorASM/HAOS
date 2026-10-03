@@ -26,6 +26,8 @@
 #include "../fs/vfs.h"
 
 extern void syscall_entry(void); // definido em syscall_asm.asm
+extern volatile uint64_t timer_ticks; // idt_asm.asm — incrementado a 100 Hz (IRQ0)
+#define SYS_MS_PER_TICK 10            // 1000 ms / 100 Hz
 
 // ---- MSRs usados pelo mecanismo SYSCALL/SYSRET ----
 #define MSR_EFER   0xC0000080
@@ -292,6 +294,61 @@ static int find_free_fd(task_t* t) {
     return -1;
 }
 
+// ---- Helpers de caminho (compartilhados por open/stat/mkdir/...) ----
+
+// Diretório de trabalho efetivo do processo: o cwd dele, ou a raiz se
+// ele nunca teve um / o diretório foi removido (VfsNode::removed).
+static VfsNode* task_cwd(task_t* t) {
+    if (t->cwd && !t->cwd->removed) return t->cwd;
+    return vfs_root();
+}
+
+// Copia um caminho vindo do usuário para um buffer do kernel
+// (out precisa ter SYS_OPEN_MAX_PATH bytes) e termina com '\0'.
+static bool copy_user_path(uint64_t user_ptr, uint64_t len, char* out) {
+    if (len == 0 || len >= SYS_OPEN_MAX_PATH) return false;
+    if (!validate_user_range(user_ptr, len)) return false;
+    kmemcpy(out, (const void*)user_ptr, len);
+    out[len] = '\0';
+    return true;
+}
+
+// Separa `path` em "diretório pai (já existente)" + "nome novo".
+// MODIFICA `path` (corta no último '/'). Rejeita: pai inexistente ou
+// não-diretório, nome vazio (caminho terminado em '/'), "." e "..",
+// e nomes >= VFS_NAME_MAX (o VFS guarda o nome em um array fixo —
+// ver o overflow corrigido em vfs_alloc_node).
+static bool resolve_parent(task_t* t, char* path, uint64_t path_len,
+                           VfsNode** out_parent, const char** out_name) {
+    int last_slash = -1;
+    for (uint64_t i = 0; i < path_len; i++) {
+        if (path[i] == '/') last_slash = (int)i;
+    }
+
+    VfsNode* parent;
+    const char* fname;
+    if (last_slash < 0) {
+        parent = task_cwd(t);              // "arquivo"
+        fname  = path;
+    } else if (last_slash == 0) {
+        parent = vfs_root();               // "/arquivo"
+        fname  = path + 1;
+    } else {
+        path[last_slash] = '\0';           // corta no último '/'
+        parent = vfs_resolve(task_cwd(t), path);
+        fname  = path + last_slash + 1;
+    }
+
+    if (!parent || parent->type != VFS_DIR) return false;
+    if (fname[0] == '\0') return false;
+    if (kstrlen(fname) >= VFS_NAME_MAX) return false;
+    if (kstrcmp(fname, ".") == 0 || kstrcmp(fname, "..") == 0) return false;
+
+    *out_parent = parent;
+    *out_name   = fname;
+    return true;
+}
+
 static uint64_t sys_open(uint64_t user_path_ptr, uint64_t path_len, uint64_t flags) {
     if (path_len == 0 || path_len >= SYS_OPEN_MAX_PATH) return (uint64_t)-1;
     if (!validate_user_range(user_path_ptr, path_len)) return (uint64_t)-1;
@@ -304,39 +361,19 @@ static uint64_t sys_open(uint64_t user_path_ptr, uint64_t path_len, uint64_t fla
     int fd = find_free_fd(t);
     if (fd < 0) return (uint64_t)-1; // tabela de FDs deste processo cheia
 
-    // Resolve relativo à RAIZ do VFS, não ao cwd do terminal que
-    // lançou o processo — um processo de usuário não tem noção de
-    // "diretório de trabalho" nesta fase. Programas devem usar
-    // caminhos absolutos por enquanto.
-    VfsNode* node = vfs_resolve(vfs_root(), path);
+    // Caminhos relativos são resolvidos a partir do cwd DESTE processo
+    // (herdado do terminal/pai; muda com SYS_CHDIR). Caminhos
+    // absolutos ("/...") continuam funcionando como antes.
+    VfsNode* node = vfs_resolve(task_cwd(t), path);
 
     if (!node && (flags & O_CREAT)) {
         // Arquivo não existe e o processo pediu criação: separa o
-        // caminho em "diretório pai" + "nome do arquivo" no último
-        // '/', resolve o pai (que PRECISA já existir e ser um
-        // diretório — não criamos diretórios intermediários) e cria
-        // o arquivo dentro dele com vfs_touch.
-        int last_slash = -1;
-        for (uint64_t i = 0; i < path_len; i++) {
-            if (path[i] == '/') last_slash = (int)i;
-        }
-
+        // caminho em "diretório pai" + "nome" (ver resolve_parent) —
+        // o pai PRECISA já existir e ser um diretório; não criamos
+        // diretórios intermediários.
         VfsNode* parent;
         const char* fname;
-        if (last_slash < 0) {
-            parent = vfs_root();
-            fname  = path;
-        } else if (last_slash == 0) {
-            parent = vfs_root();       // "/arquivo"
-            fname  = path + 1;
-        } else {
-            path[last_slash] = '\0';   // corta o caminho no último '/'
-            parent = vfs_resolve(vfs_root(), path);
-            fname  = path + last_slash + 1;
-        }
-
-        if (!parent || parent->type != VFS_DIR) return (uint64_t)-1;
-        if (fname[0] == '\0') return (uint64_t)-1; // caminho terminava em '/'
+        if (!resolve_parent(t, path, path_len, &parent, &fname)) return (uint64_t)-1;
 
         node = vfs_touch(parent, fname);
     }
@@ -583,7 +620,8 @@ static uint64_t sys_spawn(uint64_t user_path_ptr, uint64_t path_len,
     kmemcpy(path, (const void*)user_path_ptr, path_len);
     path[path_len] = '\0';
 
-    VfsNode* node = vfs_resolve(vfs_root(), path);
+    // Caminho relativo: a partir do cwd do PAI (o filho herda o mesmo cwd).
+    VfsNode* node = vfs_resolve(task_cwd(parent), path);
     if (!node || node->type != VFS_FILE) return (uint64_t)-1;
 
     char argv_buf[SYS_SPAWN_MAX_ARGV + SYS_OPEN_MAX_PATH + 2];
@@ -606,7 +644,7 @@ static uint64_t sys_spawn(uint64_t user_path_ptr, uint64_t path_len,
         if (path[i] == '/') task_name = path + i + 1;
     }
 
-    task_t* child = process_create(task_name, node, argv_buf, alen);
+    task_t* child = process_create_with_cwd(task_name, node, argv_buf, alen, task_cwd(parent));
     if (!child) return (uint64_t)-1;
 
     child->stdout_owner = parent->stdout_owner;
@@ -708,6 +746,149 @@ static uint64_t sys_waitpid(uint64_t pid, uint64_t user_out_ptr) {
     return 1;
 }
 
+// ============================================================
+//  Syscalls 9..19 — identidade, tempo, sistema de arquivos
+// ============================================================
+
+static uint64_t sys_getpid(void) {
+    return task_current()->id;
+}
+
+static uint64_t sys_yield(void) {
+    scheduler_yield();
+    return 0;
+}
+
+static uint64_t sys_uptime_ms(void) {
+    return timer_ticks * SYS_MS_PER_TICK;
+}
+
+// Dorme cedendo a CPU em laço (mesmo padrão de SYS_WAITPID). As
+// syscalls entram com IF=0 (SFMASK), então o tempo só avança porque
+// OUTRAS tasks (a GUI, task 0) continuam rodando com interrupções
+// ligadas enquanto esta cede a CPU — se algum dia esta for a única
+// task escalonável, o laço nunca terminaria. Não é um problema hoje
+// (a task 0 sempre existe), mas é a razão de não usarmos `hlt` aqui.
+// Um "wake_tick" no scheduler (task BLOCKED até o prazo) evitaria o
+// polling — fica como melhoria futura.
+static uint64_t sys_sleep_ms(uint64_t ms) {
+    if (ms > SYS_SLEEP_MAX_MS) ms = SYS_SLEEP_MAX_MS;
+    uint64_t ticks    = (ms + SYS_MS_PER_TICK - 1) / SYS_MS_PER_TICK;
+    uint64_t deadline = timer_ticks + ticks;
+    while (timer_ticks < deadline) {
+        scheduler_yield();
+    }
+    return 0;
+}
+
+static inline uint32_t haos_type_of(const VfsNode* n) {
+    return n->type == VFS_DIR ? HAOS_TYPE_DIR : HAOS_TYPE_FILE;
+}
+static inline uint32_t haos_size_of(const VfsNode* n) {
+    return n->type == VFS_DIR ? n->child_count : n->size;
+}
+
+static uint64_t sys_stat(uint64_t user_path_ptr, uint64_t path_len, uint64_t user_out_ptr) {
+    char path[SYS_OPEN_MAX_PATH];
+    if (!copy_user_path(user_path_ptr, path_len, path)) return (uint64_t)-1;
+    if (!validate_user_range_writable(user_out_ptr, sizeof(haos_stat_t))) return (uint64_t)-1;
+
+    VfsNode* n = vfs_resolve(task_cwd(task_current()), path);
+    if (!n) return (uint64_t)-1;
+
+    haos_stat_t st;
+    st.type = haos_type_of(n);
+    st.size = haos_size_of(n);
+    kmemcpy((void*)user_out_ptr, &st, sizeof(st));
+    return 0;
+}
+
+static uint64_t sys_readdir(uint64_t user_path_ptr, uint64_t path_len,
+                            uint64_t index, uint64_t user_out_ptr) {
+    char path[SYS_OPEN_MAX_PATH];
+    if (!copy_user_path(user_path_ptr, path_len, path)) return (uint64_t)-1;
+    if (!validate_user_range_writable(user_out_ptr, sizeof(haos_dirent_t))) return (uint64_t)-1;
+
+    VfsNode* dir = vfs_resolve(task_cwd(task_current()), path);
+    if (!dir || dir->type != VFS_DIR) return (uint64_t)-1;
+    if (index >= dir->child_count) return 0; // fim da listagem
+
+    const VfsNode* c = dir->children[index];
+    haos_dirent_t e;
+    kmemset(&e, 0, sizeof(e));
+    e.type = haos_type_of(c);
+    e.size = haos_size_of(c);
+    for (uint32_t i = 0; i < HAOS_NAME_MAX - 1 && c->name[i]; i++) e.name[i] = c->name[i];
+    kmemcpy((void*)user_out_ptr, &e, sizeof(e));
+    return 1;
+}
+
+static uint64_t sys_getcwd(uint64_t user_buf_ptr, uint64_t size) {
+    char path[SYS_OPEN_MAX_PATH];
+    vfs_path_of(task_cwd(task_current()), path, sizeof(path));
+    uint64_t len = kstrlen(path);
+    if (size < len + 1) return (uint64_t)-1;
+    if (!validate_user_range_writable(user_buf_ptr, len + 1)) return (uint64_t)-1;
+    kmemcpy((void*)user_buf_ptr, path, len + 1);
+    return len;
+}
+
+static uint64_t sys_chdir(uint64_t user_path_ptr, uint64_t path_len) {
+    char path[SYS_OPEN_MAX_PATH];
+    if (!copy_user_path(user_path_ptr, path_len, path)) return (uint64_t)-1;
+
+    task_t* t = task_current();
+    VfsNode* n = vfs_resolve(task_cwd(t), path);
+    if (!n || n->type != VFS_DIR) return (uint64_t)-1;
+    t->cwd = n;
+    return 0;
+}
+
+static uint64_t sys_mkdir(uint64_t user_path_ptr, uint64_t path_len) {
+    char path[SYS_OPEN_MAX_PATH];
+    if (!copy_user_path(user_path_ptr, path_len, path)) return (uint64_t)-1;
+
+    VfsNode* parent;
+    const char* name;
+    if (!resolve_parent(task_current(), path, path_len, &parent, &name)) return (uint64_t)-1;
+    return vfs_mkdir(parent, name) ? 0 : (uint64_t)-1;
+}
+
+static uint64_t sys_unlink(uint64_t user_path_ptr, uint64_t path_len) {
+    char path[SYS_OPEN_MAX_PATH];
+    if (!copy_user_path(user_path_ptr, path_len, path)) return (uint64_t)-1;
+
+    VfsNode* n = vfs_resolve(task_cwd(task_current()), path);
+    if (!n || !n->parent || n == vfs_root()) return (uint64_t)-1;     // inexistente / raiz
+    if (n->type == VFS_DIR && n->child_count > 0) return (uint64_t)-1; // só diretório VAZIO
+    if (n == vfs_cwd()) return (uint64_t)-1;                           // cwd global do terminal
+    return vfs_rm(n) ? 0 : (uint64_t)-1;
+}
+
+static uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
+    task_t* t = task_current();
+    if (fd >= TASK_MAX_OPEN_FILES || t->fd_table[fd] == NULL) return (uint64_t)-1;
+    VfsNode* node = t->fd_table[fd];
+    if (node->removed) return (uint64_t)-1;
+
+    int64_t cur = (int64_t)(t->fd_offset[fd] & FD_OFFSET_MASK);
+    int64_t base;
+    switch (whence) {
+        case SEEK_SET: base = 0;                  break;
+        case SEEK_CUR: base = cur;                break;
+        case SEEK_END: base = (int64_t)node->size; break;
+        default:       return (uint64_t)-1;
+    }
+
+    int64_t pos;
+    if (__builtin_add_overflow(base, (int64_t)offset, &pos)) return (uint64_t)-1;
+    if (pos < 0 || pos > (int64_t)VFS_FILE_MAX) return (uint64_t)-1;
+
+    // Preserva o bit "aberto para escrita" (FD_WRITABLE_BIT).
+    t->fd_offset[fd] = (t->fd_offset[fd] & FD_WRITABLE_BIT) | (uint32_t)pos;
+    return (uint64_t)pos;
+}
+
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a5; // SYS_SPAWN usa até a4; nenhuma syscall usa a5 ainda
@@ -722,6 +903,17 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_WRITE_FD: return sys_write_fd(a1, a2, a3);
         case SYS_SPAWN: return sys_spawn(a1, a2, a3, a4);
         case SYS_WAITPID: return sys_waitpid(a1, a2);
+        case SYS_GETPID:    return sys_getpid();
+        case SYS_YIELD:     return sys_yield();
+        case SYS_UPTIME_MS: return sys_uptime_ms();
+        case SYS_SLEEP_MS:  return sys_sleep_ms(a1);
+        case SYS_STAT:      return sys_stat(a1, a2, a3);
+        case SYS_READDIR:   return sys_readdir(a1, a2, a3, a4);
+        case SYS_GETCWD:    return sys_getcwd(a1, a2);
+        case SYS_CHDIR:     return sys_chdir(a1, a2);
+        case SYS_MKDIR:     return sys_mkdir(a1, a2);
+        case SYS_UNLINK:    return sys_unlink(a1, a2);
+        case SYS_LSEEK:     return sys_lseek(a1, a2, a3);
         default:        return (uint64_t)-1; // syscall desconhecida
     }
 }

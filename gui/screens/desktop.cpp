@@ -4,6 +4,7 @@
 #include "../elements/icons.h"
 #include "../elements/taskbar.h"
 #include "../elements/startmenu.h"
+#include "../elements/contextmenu.h"
 #include "../apps/terminal.h"
 #include "../apps/about.h"
 #include "../apps/config.h"
@@ -31,6 +32,23 @@ static void desktop_handle_click(int32_t mx, int32_t my, uint32_t sw, uint32_t s
 static void handle_desktop_key(uint8_t c) {
     if (c == 27) {
         start_menu_open = false;
+        contextmenu_close();
+        return;
+    }
+
+    // Atalhos globais de janela (ver kernel/keyboard.c): Alt+Tab ou
+    // Ctrl+Tab alterna para a próxima janela; Alt+F4 fecha a focada.
+    // Tratados AQUI, antes de repassar a tecla à janela em foco, para
+    // funcionarem independentemente do app que estiver ativo.
+    if (c == KEY_SWITCH_WINDOW) {
+        start_menu_open = false;
+        contextmenu_close();
+        wm_focus_next();
+        return;
+    }
+    if (c == KEY_CLOSE_WINDOW) {
+        Window* f = wm_get_focused();
+        if (f) wm_close(f);
         return;
     }
 
@@ -81,6 +99,37 @@ static void desktop_handle_click(int32_t mx, int32_t my, uint32_t sw, uint32_t s
 }
 
 // -------------------------------------------------------------
+// Ações do menu de contexto do desktop (botão direito)
+// -------------------------------------------------------------
+// `item` segue a ordem de contextmenu.h: 0 Terminal, 1 Editor,
+// 2 Arquivos, 3 Configurações, 4 Sobre. Mesmas chamadas dos ícones
+// do desktop / menu Iniciar.
+static void desktop_context_action(int item, uint32_t sw, uint32_t sh) {
+    switch (item) {
+        case 0:
+            if (!terminal_win || !terminal_win->active)
+                terminal_win = terminal_create((int32_t)(sw/2 - 340), (int32_t)(sh/2 - 200));
+            else
+                wm_focus(terminal_win);
+            break;
+        case 1:
+            editor_create((int32_t)(sw/2 - 300), (int32_t)(sh/2 - 200), nullptr);
+            break;
+        case 2:
+            file_manager_create((int32_t)(sw/2 - 310), (int32_t)(sh/2 - 220));
+            break;
+        case 3:
+            open_config_window();
+            break;
+        case 4:
+            open_about_window();
+            break;
+        default:
+            break;
+    }
+}
+
+// -------------------------------------------------------------
 // Loop principal do desktop
 // -------------------------------------------------------------
 extern "C" void run_desktop(void) {
@@ -125,23 +174,62 @@ extern "C" void run_desktop(void) {
 
         if (scroll != 0) wm_mouse_scroll(mx, my, scroll);
 
+        // Botão direito: abre o menu de contexto do desktop, mas só sobre
+        // a área livre (nem taskbar, nem uma janela). Com o menu Iniciar
+        // aberto, o clique direito apenas o fecha.
+        if (mouse_right_clicked()) {
+            contextmenu_close();
+            if (start_menu_open) {
+                start_menu_open = false;
+            } else if (my < (int32_t)(sh - TASKBAR_H) && !wm_window_at(mx, my)) {
+                contextmenu_open(mx, my);
+            }
+        }
+
+        // Clique esquerdo: cada clique tem UM destino, seguindo a ordem
+        // das camadas na tela (de cima para baixo): menu de contexto ->
+        // taskbar -> menu Iniciar -> janelas -> ícones do desktop.
+        // ANTES, o clique ia SEMPRE para os ícones do desktop (abrindo o
+        // app do ícone mesmo quando caía dentro de uma janela por cima
+        // dele) e SEMPRE para o WM (atravessando o menu Iniciar/taskbar
+        // e podendo roubar o foco da janela que o item acabou de abrir).
         if (pressed && !was_pressed) {
             uint32_t ty = sh - TASKBAR_H;
-            if (my >= (int32_t)ty) {
+            bool to_wm    = true;   // oferece o clique às janelas
+            bool to_icons = false;  // se nenhuma janela o consumir, vale para os ícones
+
+            bool in_ctx = contextmenu_is_open() && contextmenu_contains(mx, my);
+            if (in_ctx) {
+                int item = contextmenu_hit_test(mx, my);
+                contextmenu_close();
+                if (item >= 0) desktop_context_action(item, sw, sh);
+                to_wm = false;
+            } else {
+                contextmenu_close(); // clique fora do menu o fecha e segue adiante
+            }
+
+            if (in_ctx) {
+                // já tratado acima
+            }
+            else if (my >= (int32_t)ty) {
                 if (mx >= 4 && mx < 4 + START_BTN_W) {
                     start_menu_open = !start_menu_open;
                 } else {
                     Window* clicked = taskbar_hit_test(mx, my);
                     if (clicked) {
-                        if (clicked->minimized) wm_restore(clicked);
+                        if (clicked->minimized) wm_unminimize(clicked); // volta como estava (maximizada continua maximizada)
                         else if (clicked->focused) wm_minimize(clicked); // clicar de novo na já focada minimiza (padrão Windows)
                         else wm_focus(clicked);
                         start_menu_open = false;
                     }
                 }
+                to_wm = false; // clique na taskbar não vai para as janelas
             }
             else if (start_menu_open) {
                 int item = start_menu_hit_test(mx, my);
+                // Item clicado: o menu consome o clique. Fora dos itens
+                // (-1): só fecha o menu e deixa o clique seguir adiante.
+                to_wm = (item == -1);
                 if (item == 0) {
                     if (!terminal_win || !terminal_win->active)
                         terminal_win = terminal_create(
@@ -169,10 +257,12 @@ extern "C" void run_desktop(void) {
                 }
             }
             else {
-                desktop_handle_click(mx, my, sw, sh);
+                to_icons = true;
             }
 
-            wm_mouse_down(mx, my);
+            bool wm_consumed = to_wm && wm_mouse_down(mx, my);
+            if (to_icons && !wm_consumed)
+                desktop_handle_click(mx, my, sw, sh);
         }
 
         if (pressed && was_pressed)
@@ -216,6 +306,9 @@ extern "C" void run_desktop(void) {
 
         if (start_menu_open)
             draw_start_menu();
+
+        if (contextmenu_is_open())
+            draw_contextmenu(mx, my);
 
         // Cursor muda de ícone ao passar sobre uma borda/canto
         // redimensionável da janela focada (comportamento padrão

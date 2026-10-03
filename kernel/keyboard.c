@@ -53,6 +53,7 @@ static bool shift_pressed = false;
 static bool caps_lock     = false;
 static bool extended_mode = false;
 static bool ctrl_pressed  = false;
+static bool alt_pressed   = false;
 
 static void kb_push_char(uint8_t c) {
     uint8_t next = (kb_char_head + 1) % KB_BUF_SIZE;
@@ -76,6 +77,8 @@ static void process_scancode(uint8_t sc) {
         extended_mode = false;
         // Ctrl direito também usa o prefixo 0xE0 (scancode 0x1D)
         if (sc == 0x1D) { ctrl_pressed = !release; return; }
+        // Alt direito / AltGr também usa o prefixo 0xE0 (scancode 0x38)
+        if (sc == 0x38) { alt_pressed = !release; return; }
         if (!release) {
             if (shift_pressed) {
                 switch (sc) {
@@ -103,7 +106,23 @@ static void process_scancode(uint8_t sc) {
     if (sc == 0x2A || sc == 0x36) { shift_pressed = !release; return; }
     if (sc == 0x3A && !release)   { caps_lock = !caps_lock;   return; }
     if (sc == 0x1D) { ctrl_pressed = !release; return; }  // Ctrl esquerdo
+    if (sc == 0x38) { alt_pressed  = !release; return; }  // Alt esquerdo
     if (release) return;
+
+    // Atalhos globais de janela. Tratados aqui, no fluxo de scancodes,
+    // para o estado de Alt/Ctrl ser o do MOMENTO da tecla (e não o de
+    // quando o desktop for ler o caractere, alguns frames depois).
+    // Ctrl+Tab existe como alternativa ao Alt+Tab porque alguns
+    // sistemas hospedeiros (VirtualBox em Windows, por ex.) podem
+    // interceptar o Alt+Tab antes de chegar ao convidado.
+    if (sc == 0x0F && (alt_pressed || ctrl_pressed)) {   // Tab
+        kb_push_char(KEY_SWITCH_WINDOW);
+        return;
+    }
+    if (sc == 0x3E && alt_pressed) {                      // Alt+F4
+        kb_push_char(KEY_CLOSE_WINDOW);
+        return;
+    }
 
     // F2 (scancode 0x3C) — usado pelo editor de texto para salvar
     if (sc == 0x3C) { kb_push_char(KEY_F2); return; }
@@ -135,7 +154,7 @@ static void process_scancode(uint8_t sc) {
 
 void keyboard_init(void) {
     kb_char_head = kb_char_tail = 0;
-    shift_pressed = caps_lock = extended_mode = ctrl_pressed = false;
+    shift_pressed = caps_lock = extended_mode = ctrl_pressed = alt_pressed = false;
     // Zera os cabeçalhos do buffer circular da ISR
     keyboard_hd = 0;
     keyboard_tl = 0;

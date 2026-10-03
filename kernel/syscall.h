@@ -109,7 +109,67 @@ extern "C" {
                           // Não há checagem de parentesco: qualquer
                           // processo que conheça o id pode esperar por
                           // ele, não só quem o criou.
-#define SYS_COUNT     9
+#define SYS_GETPID    9  // sys_getpid() -> id do processo atual (o MESMO valor que
+                          // SYS_SPAWN devolve ao pai e que SYS_WAITPID espera).
+#define SYS_YIELD     10 // sys_yield() -> 0. Cede a CPU voluntariamente.
+#define SYS_UPTIME_MS 11 // sys_uptime_ms() -> milissegundos desde o boot
+                          // (resolução de 10 ms: o PIT roda a 100 Hz).
+#define SYS_SLEEP_MS  12 // sys_sleep_ms(uint64_t ms) -> 0. Dorme pelo menos `ms`
+                          // milissegundos (arredondado para cima ao tick de
+                          // 10 ms; máx. SYS_SLEEP_MAX_MS, valores maiores são
+                          // limitados). Implementado cedendo a CPU em laço até o
+                          // prazo — a task continua escalonável, só não faz nada.
+#define SYS_STAT      13 // sys_stat(const char* path, uint64_t path_len,
+                          //          haos_stat_t* out) -> 0 ou -1 (não existe /
+                          // ponteiro inválido). Caminho relativo é resolvido a
+                          // partir do cwd do processo.
+#define SYS_READDIR   14 // sys_readdir(const char* path, uint64_t path_len,
+                          //             uint64_t index, haos_dirent_t* out)
+                          // -> 1 (out preenchido), 0 (index além da última
+                          // entrada = fim) ou -1 (erro / não é diretório).
+                          // Sem estado no kernel: o chamador itera index=0,1,2...
+#define SYS_GETCWD    15 // sys_getcwd(char* buf, uint64_t size) -> tamanho do caminho
+                          // (sem o '\0'; o '\0' também é escrito) ou -1 se `size`
+                          // for pequeno demais / ponteiro inválido.
+#define SYS_CHDIR     16 // sys_chdir(const char* path, uint64_t path_len) -> 0 ou -1.
+                          // Só afeta ESTE processo (cwd por processo).
+#define SYS_MKDIR     17 // sys_mkdir(const char* path, uint64_t path_len) -> 0 ou -1
+                          // (já existe, pai inexistente, nome longo, VFS cheio...).
+                          // Não cria diretórios intermediários.
+#define SYS_UNLINK    18 // sys_unlink(const char* path, uint64_t path_len) -> 0 ou -1.
+                          // Remove arquivo OU diretório VAZIO. Diretório com
+                          // conteúdo, a raiz e o cwd do terminal são recusados.
+                          // Descritores abertos para o arquivo passam a falhar
+                          // (-1) em read/write — ver VfsNode::removed.
+#define SYS_LSEEK     19 // sys_lseek(int fd, int64_t offset, int whence) -> nova
+                          // posição (>= 0) ou -1. Só para fds de arquivo (>= 3).
+                          // Posição fica limitada a [0, VFS_FILE_MAX].
+#define SYS_COUNT     20
+
+// ---- whence de sys_lseek ----
+#define SEEK_SET  0
+#define SEEK_CUR  1
+#define SEEK_END  2
+
+// ---- Limite de SYS_SLEEP_MS (1 hora) ----
+#define SYS_SLEEP_MAX_MS  (60ULL * 60ULL * 1000ULL)
+
+// ---- Estruturas trocadas com o espaço de usuário ----
+// ESPELHADAS em libc/include/haos/fs.h — mantenha o layout idêntico.
+#define HAOS_TYPE_DIR   0   // == VFS_DIR
+#define HAOS_TYPE_FILE  1   // == VFS_FILE
+#define HAOS_NAME_MAX   64  // == VFS_NAME_MAX (inclui o '\0')
+
+typedef struct {
+    uint32_t type;   // HAOS_TYPE_DIR ou HAOS_TYPE_FILE
+    uint32_t size;   // arquivo: bytes; diretório: nº de entradas
+} haos_stat_t;
+
+typedef struct {
+    uint32_t type;
+    uint32_t size;               // idem haos_stat_t::size
+    char     name[HAOS_NAME_MAX];// terminado em '\0'
+} haos_dirent_t;
 
 // ---- Flags de sys_open (bitmask) ----
 #define O_RDONLY  0x0   // abre para leitura (comportamento padrão,

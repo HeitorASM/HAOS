@@ -7,7 +7,15 @@ usando esta libc mínima e freestanding.
 
 ## O que já existe
 
-- **`unistd.h`**: `write()`, `_exit()`, `sbrk()`, `open()`, `read()`, `close()`
+- **`unistd.h`**:
+  - E/S: `write()`, `read()`, `open()`, `open2()`, `close()`, `write_fd()`, `lseek()`
+  - Processos: `spawn()`, `waitpid()`, `getpid()`, `yield()`, `_exit()`
+  - Tempo: `uptime_ms()`, `sleep_ms()` (resolução de 10 ms)
+  - Sistema de arquivos: `stat()`, `readdir()`, `getcwd()`, `chdir()`,
+    `mkdir()`, `unlink()` — caminhos relativos são resolvidos a partir
+    do diretório de trabalho **do processo** (herdado do terminal/pai)
+  - Memória: `sbrk()`
+  - Estruturas (`struct haos_stat`, `struct haos_dirent`): `haos/fs.h`
 - **`stdlib.h`**: `exit()`, `malloc()`, `free()`, `realloc()`
 - **`string.h`**: `memcpy`, `memset`, `memmove`, `memcmp`, `strlen`,
   `strcpy`, `strncpy`, `strcat`, `strcmp`, `strncmp`
@@ -23,20 +31,16 @@ usando esta libc mínima e freestanding.
 
 ## O que NÃO existe ainda
 
-- Múltiplos processos filhos (`fork`/`spawn`) — um processo não pode
-  criar outro processo
-- Descritores de arquivo padrão (stdin/stdout/stderr como fds 0/1/2)
-  — `write()` sempre vai para o canal de stdout implícito do
-  processo (redirecionado para o terminal que o lançou), não para um
-  "fd 1" de verdade; `open()`/`read()`/`close()` só cobrem arquivos
-  abertos explicitamente pelo programa
-- Escrita em arquivo via syscall — `open()` só suporta leitura;
-  criar/escrever/truncar um arquivo continua sendo uma operação
-  exclusiva do kernel/GUI (ex.: o editor de texto usa `vfs_write`
-  diretamente, não uma syscall)
-- Diretório de trabalho por processo — `open()` sempre resolve a
-  partir da raiz do VFS; caminhos relativos não funcionam a partir
-  de um programa (só no terminal, que tem seu próprio `cwd`)
+- Descritores de arquivo padrão (stdin/stdout/stderr como fds 0/1/2
+  de verdade) — `write()` sempre vai para o canal de stdout implícito
+  do processo (redirecionado para o terminal que o lançou), não para
+  um "fd 1"; fd 0 só serve para `read()` de stdin (não para `lseek()`)
+- Pipes e redirecionamento (`>`, `|`)
+- Renomear/mover arquivos, permissões, timestamps
+- `fork()`/`exec()` — o modelo é `spawn()` + `waitpid()`
+- Sleep sem polling: `sleep_ms()` cede a CPU em laço até o prazo (a
+  task continua escalonável); um bloqueio com "wake_tick" no
+  scheduler é melhoria futura
 
 ## Como compilar a libc
 

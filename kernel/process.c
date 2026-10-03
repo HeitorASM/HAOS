@@ -210,8 +210,14 @@ uint64_t pages_needed_for(uint64_t bytes) {
     return (bytes + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K;
 }
 
-task_t* process_create(const char* name, VfsNode* executable_file,
-                        const char* argv_str, uint64_t argv_len) {
+// Igual a process_create, mas define explicitamente o diretório de
+// trabalho inicial do processo (`cwd`; NULL = raiz). sys_spawn usa
+// isto para o filho herdar o cwd do PAI desde o primeiro instante —
+// atribuir depois de process_create deixaria uma janela em que o
+// filho já pode estar rodando com o cwd errado.
+task_t* process_create_with_cwd(const char* name, VfsNode* executable_file,
+                        const char* argv_str, uint64_t argv_len,
+                        VfsNode* cwd) {
     hexec_info_t info;
     if (!parse_hexec_header(executable_file, &info)) return NULL;
 
@@ -562,6 +568,7 @@ task_t* process_create(const char* name, VfsNode* executable_file,
                                         // avança isso conforme o
                                         // processo pede para crescer.
     t->heap_limit        = heap_limit;
+    t->cwd               = cwd;
     for (int fd = 0; fd < TASK_MAX_OPEN_FILES; fd++) {
         t->fd_table[fd]  = NULL;
         t->fd_offset[fd] = 0;
@@ -589,4 +596,12 @@ _Noreturn void process_bootstrap(void) {
     // (do_switch_to, em scheduler.c) antes desta task assumir a
     // CPU — não precisa repetir aqui.
     enter_usermode(t->user_entry, t->user_stack_top);
+}
+
+// Versão original: o processo herda o cwd global do VFS (o do
+// terminal/GUI que o lançou via `run`).
+task_t* process_create(const char* name, VfsNode* executable_file,
+                        const char* argv_str, uint64_t argv_len) {
+    return process_create_with_cwd(name, executable_file, argv_str, argv_len,
+                                   vfs_cwd());
 }

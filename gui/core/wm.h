@@ -41,6 +41,24 @@ void    wm_minimize(Window* win);
 void    wm_restore(Window* win);     // desminimiza E desmaximiza
 void    wm_maximize_toggle(Window* win);
 
+// Tira a janela do estado minimizado e a foca, MANTENDO-A maximizada
+// se estava (wm_restore, por outro lado, também desmaximiza). É o que
+// o clique no item da taskbar usa: restaurar uma janela maximizada que
+// foi minimizada deve trazê-la de volta maximizada, como no Windows.
+void    wm_unminimize(Window* win);
+
+// Alt+Tab / Ctrl+Tab: foca a PRÓXIMA janela (na ordem dos slots do
+// WM), trazendo-a de volta se estiver minimizada. Não faz nada se
+// houver no máximo uma janela.
+void    wm_focus_next(void);
+
+// Janela visível mais ao topo do z-order que contém (mx, my), ou
+// nullptr se o ponto está sobre o desktop. Mesma ordem de teste de
+// wm_mouse_down (focada primeiro, depois as demais de trás para a
+// frente). Usado, por exemplo, para decidir se um clique direito caiu
+// no desktop (abre o menu de contexto) ou sobre uma janela.
+Window* wm_window_at(int32_t mx, int32_t my);
+
 // ---- Iteração de todas as janelas (para a taskbar listar todas,
 //      não só a focada) ----
 // Percorre os MAX_WINDOWS slots; retorna nullptr em slots vazios.

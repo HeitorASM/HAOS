@@ -58,6 +58,8 @@ C_SRCS = src/unistd/write.c   \
          src/unistd/write_fd.c \
          src/unistd/spawn.c   \
          src/unistd/waitpid.c \
+         src/unistd/proc.c    \
+         src/unistd/fsops.c   \
          src/stdlib/exit.c    \
          src/stdlib/malloc.c  \
          src/stdio/printf.c   \

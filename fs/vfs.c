@@ -8,6 +8,8 @@
 #include "../kernel/generated/calc_hexec_data.h"
 #include "../kernel/generated/notes_hexec_data.h"
 #include "../kernel/generated/launcher_hexec_data.h"
+#include "../kernel/generated/systest_hexec_data.h"
+#include "../kernel/generated/ls_hexec_data.h"
 // Sistema de arquivos virtual que roda na RAM do OS.
 // Arquivos crescem dinamicamente (dobra de capacidade) até VFS_FILE_MAX,
 // e diretórios suportam até VFS_MAX_CHILDREN itens.
@@ -29,7 +31,15 @@ static bool vfs_persist(void) {
 static VfsNode* vfs_alloc_node(const char* name, VfsType type) {
     VfsNode* n = (VfsNode*)kzalloc(sizeof(VfsNode));
     if (!n) return NULL;
-    kstrcpy(n->name, name);
+    // Cópia LIMITADA: `name` pode vir de um processo de usuário (sys_open
+    // com O_CREAT, sys_mkdir) e ter até centenas de bytes — um kstrcpy
+    // sem limite estourava `name[VFS_NAME_MAX]` e sobrescrevia type,
+    // size e o ponteiro `data` do próprio nó (escrita arbitrária no
+    // kernel a partir de Ring 3). kzalloc já zerou o nó, então o
+    // último byte de `name` continua '\0'. Os chamadores públicos
+    // (vfs_mkdir/vfs_touch) já rejeitam nomes longos; isto é a
+    // segunda camada de defesa.
+    kstrncpy(n->name, name, VFS_NAME_MAX - 1);
     n->type = type;
     n->size = 0;
     n->capacity = 0;
@@ -51,6 +61,73 @@ static bool vfs_add_child(VfsNode* parent, VfsNode* child) {
 
 // ---- API pública --------------------------------------------
 
+// ---- Executáveis embutidos em /bin ---------------------------
+//
+// Cada entrada vem de um header GERADO (kernel/generated/*_hexec_data.h
+// — artefato de build criado por tools/embed_hexec.py a partir de um
+// .hexec; nunca edite esses .h à mão: edite examples/<nome>/main.c e
+// regenere, ver libc/README.md). Escritos byte a byte via
+// vfs_ensure_capacity + kmemcpy (não vfs_write, que corta no primeiro
+// '\0' — inaceitável para código de máquina). Rode com
+// "run <nome>.hexec" no terminal.
+//
+//   hello / hello_data / hello_full — exemplos de libc, .data/.bss, syscalls
+//   calc      — calculadora (scanf)
+//   notes     — scanf + escrita de arquivo (open2/write_fd)
+//   launcher  — spawn() + waitpid()
+//   systest   — autoteste das syscalls 9..19 e das correções de segurança
+//   ls        — lista diretórios (SYS_READDIR/SYS_STAT)
+typedef struct {
+    const char*          name;
+    const unsigned char* data;
+    uint32_t             size;
+} BuiltinBin;
+
+static const BuiltinBin g_builtin_bins[] = {
+    { "hello.hexec",      hello_hexec_data,      HELLO_HEXEC_SIZE      },
+    { "hello_data.hexec", hello_data_hexec_data, HELLO_DATA_HEXEC_SIZE },
+    { "hello_full.hexec", hello_full_hexec_data, HELLO_FULL_HEXEC_SIZE },
+    { "calc.hexec",       calc_hexec_data,       CALC_HEXEC_SIZE       },
+    { "notes.hexec",      notes_hexec_data,      NOTES_HEXEC_SIZE      },
+    { "launcher.hexec",   launcher_hexec_data,   LAUNCHER_HEXEC_SIZE   },
+    { "systest.hexec",    systest_hexec_data,    SYSTEST_HEXEC_SIZE    },
+    { "ls.hexec",         ls_hexec_data,         LS_HEXEC_SIZE         },
+};
+
+static bool bytes_equal(const void* a, const void* b, uint32_t n) {
+    const unsigned char* x = (const unsigned char*)a;
+    const unsigned char* y = (const unsigned char*)b;
+    for (uint32_t i = 0; i < n; i++) if (x[i] != y[i]) return false;
+    return true;
+}
+
+// Instala os executáveis embutidos em `bin`, criando os que faltam e
+// SUBSTITUINDO os que existem com conteúdo diferente (versão nova do
+// kernel); os que já estão idênticos não são tocados. Retorna true se
+// algo foi escrito (quem chama decide quando gravar no disco).
+//
+// Sem isto, um programa embutido novo só apareceria em discos
+// formatados DEPOIS dele existir: vfs_create_defaults só roda na
+// primeira formatação, e um disco já montado nunca recebia /bin
+// novos nem versões corrigidas dos antigos. Consequência: qualquer
+// edição manual em /bin/<nome embutido>.hexec é sobrescrita no boot —
+// use outro nome (ou outro diretório) para programas seus.
+static bool vfs_install_builtin_bins(VfsNode* bin) {
+    bool changed = false;
+    for (uint32_t i = 0; i < sizeof(g_builtin_bins) / sizeof(g_builtin_bins[0]); i++) {
+        const BuiltinBin* b = &g_builtin_bins[i];
+        VfsNode* f = vfs_find_child(bin, b->name);
+        if (f && f->type != VFS_FILE) continue; // há um diretório com esse nome: não mexe
+        if (f && f->size == b->size && f->data && bytes_equal(f->data, b->data, b->size)) continue;
+        if (!f) f = vfs_touch(bin, b->name);
+        if (!f || !vfs_ensure_capacity(f, b->size)) continue;
+        kmemcpy(f->data, b->data, b->size);
+        f->size = b->size;
+        changed = true;
+    }
+    return changed;
+}
+
 static void vfs_create_defaults(void) {
     VfsNode* bin  = vfs_mkdir(g_root, "bin");
     VfsNode* home = vfs_mkdir(g_root, "home");
@@ -59,88 +136,8 @@ static void vfs_create_defaults(void) {
 
     (void)bin; (void)tmp;
 
-    // /bin/hello.hexec — executável de exemplo, escrito em C de
-    // verdade (ver examples/hello_c/main.c) usando a libc mínima do
-    // HAOS (libc/), compilado e empacotado via libc/mkhexec.py.
-    // Este header (kernel/generated/hello_hexec_data.h) é um
-    // artefato de BUILD gerado a partir daquele fonte — nunca edite
-    // este .h manualmente; edite examples/hello_c/main.c e regenere
-    // (ver libc/README.md para o passo a passo completo).
-    // Escrito bytes-a-bytes via vfs_ensure_capacity+kmemcpy (não
-    // vfs_write, que corta no primeiro '\0' — inaceitável para
-    // código de máquina binário, que naturalmente contém bytes zero
-    // no meio). Rode com "run hello.hexec" no terminal.
-    {
-        VfsNode* hello = vfs_touch(bin, "hello.hexec");
-        if (hello && vfs_ensure_capacity(hello, HELLO_HEXEC_SIZE)) {
-            kmemcpy(hello->data, hello_hexec_data, HELLO_HEXEC_SIZE);
-            hello->size = HELLO_HEXEC_SIZE;
-        }
-    }
-
-    // /bin/hello_data.hexec — segundo exemplo, validando HEXEC v2 de
-    // ponta a ponta: usa uma variável .data (inicializada, valor != 0)
-    // e uma .bss (não inicializada) — ambas mapeadas RW+NX pelo
-    // loader, em páginas SEPARADAS de .text (RX). Ver
-    // examples/hello_data/main.c. Rode com "run hello_data.hexec".
-    {
-        VfsNode* hello_data = vfs_touch(bin, "hello_data.hexec");
-        if (hello_data && vfs_ensure_capacity(hello_data, HELLO_DATA_HEXEC_SIZE)) {
-            kmemcpy(hello_data->data, hello_data_hexec_data, HELLO_DATA_HEXEC_SIZE);
-            hello_data->size = HELLO_DATA_HEXEC_SIZE;
-        }
-    }
-
-    // /bin/hello_full.hexec — terceiro exemplo, testando as syscalls
-    // novas de uma vez: argc/argv (passe argumentos com
-    // "run hello_full.hexec foo bar"), malloc/free (sys_sbrk), e
-    // open/read/close (lê o próprio /bin/hello.hexec e confere o
-    // magic HXEC). Ver examples/hello_full/main.c.
-    {
-        VfsNode* hello_full = vfs_touch(bin, "hello_full.hexec");
-        if (hello_full && vfs_ensure_capacity(hello_full, HELLO_FULL_HEXEC_SIZE)) {
-            kmemcpy(hello_full->data, hello_full_hexec_data, HELLO_FULL_HEXEC_SIZE);
-            hello_full->size = HELLO_FULL_HEXEC_SIZE;
-        }
-    }
-
-    // /bin/calc.hexec — calculadora interativa de linha de comando,
-    // testando stdin de verdade: le expressões "numero op numero"
-    // via read(0, ...) (syscall SYS_READ com fd=0, bloqueante — ver
-    // sys_read_stdin em kernel/syscall.c) e imprime o resultado em
-    // loop, até "sair"/"exit". Usa aritmética fixed-point (inteiros
-    // em centésimos) em vez de float/double, já que processos de
-    // usuário rodam sem FPU/SSE (ver comentário em
-    // examples/calc/main.c). Rode com "run calc.hexec".
-    {
-        VfsNode* calc = vfs_touch(bin, "calc.hexec");
-        if (calc && vfs_ensure_capacity(calc, CALC_HEXEC_SIZE)) {
-            kmemcpy(calc->data, calc_hexec_data, CALC_HEXEC_SIZE);
-            calc->size = CALC_HEXEC_SIZE;
-        }
-    }
-
-    // /bin/notes.hexec — testa scanf() + escrita de arquivo via
-    // open2(O_WRONLY|O_CREAT|O_TRUNC) e write_fd() (SYS_WRITE_FD).
-    // Ver examples/notes/main.c. Rode com "run notes.hexec".
-    {
-        VfsNode* notes = vfs_touch(bin, "notes.hexec");
-        if (notes && vfs_ensure_capacity(notes, NOTES_HEXEC_SIZE)) {
-            kmemcpy(notes->data, notes_hexec_data, NOTES_HEXEC_SIZE);
-            notes->size = NOTES_HEXEC_SIZE;
-        }
-    }
-
-    // /bin/launcher.hexec — demonstra spawn() (SYS_SPAWN): inicia dois
-    // processos filho (/bin/hello.hexec) e termina. Ver
-    // examples/launcher/main.c. Rode com "run launcher.hexec".
-    {
-        VfsNode* launcher = vfs_touch(bin, "launcher.hexec");
-        if (launcher && vfs_ensure_capacity(launcher, LAUNCHER_HEXEC_SIZE)) {
-            kmemcpy(launcher->data, launcher_hexec_data, LAUNCHER_HEXEC_SIZE);
-            launcher->size = LAUNCHER_HEXEC_SIZE;
-        }
-    }
+    // Executáveis embutidos no kernel (ver g_builtin_bins acima).
+    vfs_install_builtin_bins(bin);
 
     // /home/user
     VfsNode* user = vfs_mkdir(home, "user");
@@ -165,7 +162,18 @@ void vfs_init(void) {
     BlockDevice* device = ata_pio_device();
     HaosFsProbe probe = haosfs_probe(device);
     if (probe == HAOSFS_VALID && haosfs_mount(device, g_root)) {
+        // Atualiza /bin com os executáveis embutidos nesta versão do
+        // kernel ANTES de ligar a persistência: vfs_touch/vfs_mkdir
+        // gravam o FS INTEIRO a cada chamada quando g_persistent está
+        // ligado — com a persistência desligada fazemos todas as
+        // mudanças em RAM e gravamos UMA vez no fim, e só se algo
+        // mudou (o caso comum, boot sem novidades, não escreve nada).
+        VfsNode* bin = vfs_find_child(g_root, "bin");
+        if (!bin) bin = vfs_mkdir(g_root, "bin");
+        bool changed = (bin && bin->type == VFS_DIR) && vfs_install_builtin_bins(bin);
+
         g_persistent = true;
+        if (changed) vfs_persist();
         VfsNode* user = vfs_resolve(g_root, "/home/user");
         if (user && user->type == VFS_DIR) g_cwd = user;
         return;
@@ -234,6 +242,7 @@ VfsNode* vfs_resolve(VfsNode* base, const char* path) {
 
 VfsNode* vfs_mkdir(VfsNode* parent, const char* name) {
     if (!parent || !name || !name[0]) return NULL;
+    if (kstrlen(name) >= VFS_NAME_MAX) return NULL; // nome longo demais
     if (parent->type != VFS_DIR) return NULL;
     if (vfs_find_child(parent, name)) return NULL; // já existe
 
@@ -246,6 +255,7 @@ VfsNode* vfs_mkdir(VfsNode* parent, const char* name) {
 
 VfsNode* vfs_touch(VfsNode* parent, const char* name) {
     if (!parent || !name || !name[0]) return NULL;
+    if (kstrlen(name) >= VFS_NAME_MAX) return NULL; // nome longo demais
     if (parent->type != VFS_DIR) return NULL;
 
     // Se já existe e é arquivo, retorna ele

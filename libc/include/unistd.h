@@ -1,5 +1,6 @@
 #pragma once
 #include "haos/types.h"
+#include "haos/fs.h"
 
 // ============================================================
 //  unistd.h — Interface POSIX-like sobre as syscalls do HAOS
@@ -109,6 +110,50 @@ int waitpid(int pid, unsigned long* out_exit_code);
 // significa fim de arquivo), ou -1 em erro (fd inválido, ponteiro
 // de usuário inválido).
 ssize_t read(int fd, void* buf, size_t count);
+
+// ---- Identidade e tempo ----
+
+// Id do processo atual — o mesmo valor que spawn() devolve ao pai e
+// que waitpid() espera.
+int getpid(void);
+
+// Cede a CPU voluntariamente.
+void yield(void);
+
+// Milissegundos desde o boot (resolução de 10 ms).
+unsigned long uptime_ms(void);
+
+// Dorme pelo menos `ms` milissegundos (resolução de 10 ms; limitado a 1 h).
+// Retorna 0.
+int sleep_ms(unsigned long ms);
+
+// ---- Sistema de arquivos ----
+// Caminhos relativos são resolvidos a partir do diretório de
+// trabalho do processo (herdado do terminal/pai; muda com chdir()).
+
+// Preenche *st. Retorna 0 ou -1 (não existe).
+int stat(const char* path, struct haos_stat* st);
+
+// Lê a entrada de número `index` (0, 1, 2...) do diretório `path`.
+// Retorna 1 (entrada preenchida), 0 (acabou) ou -1 (erro/não é dir).
+int readdir(const char* path, unsigned long index, struct haos_dirent* out);
+
+// Copia o diretório atual para buf (com '\0'). Retorna buf, ou NULL
+// se `size` for pequeno demais.
+char* getcwd(char* buf, size_t size);
+
+// Muda o diretório de trabalho DESTE processo. Retorna 0 ou -1.
+int chdir(const char* path);
+
+// Cria um diretório (o pai precisa existir). Retorna 0 ou -1.
+int mkdir(const char* path);
+
+// Remove um arquivo ou diretório VAZIO. Retorna 0 ou -1.
+int unlink(const char* path);
+
+// Reposiciona o offset de um fd de arquivo (whence: SEEK_SET/CUR/END).
+// Retorna a nova posição (>= 0) ou -1. Não vale para fd 0 (stdin).
+long lseek(int fd, long offset, int whence);
 
 // Fecha um descritor de arquivo aberto por open(). Retorna 0 em
 // sucesso, -1 em erro (fd já fechado ou nunca aberto).

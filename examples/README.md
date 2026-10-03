@@ -13,6 +13,44 @@ embutido por padrão no VFS do HAOS (ver
 `kernel/generated/hello_hexec_data.h` e `fs/vfs.c`) — todo boot já
 tem `/bin/hello.hexec` disponível para testar com `run hello.hexec`.
 
+## systest/ — autoteste das syscalls
+
+Roda ~50 verificações e imprime `[PASS]`/`[FAIL]` para cada uma:
+`getpid`, `yield`, `uptime_ms`, `sleep_ms`, `stat`, `readdir`,
+`getcwd`, `chdir`, `mkdir`, `unlink`, `lseek`, caminhos relativos,
+fd de arquivo removido e as correções de segurança do kernel (nome de
+arquivo longo, ponteiro de kernel que "dá a volta", buffer somente
+leitura). **Rode depois de qualquer mudança em syscalls**:
+`run systest.hexec` — o resultado esperado termina com `TUDO OK`.
+
+## ls/ — lista diretórios
+
+`run ls.hexec` (diretório atual), `run ls.hexec /bin`,
+`run ls.hexec notes.txt`. Exemplo de uso de `readdir()`/`stat()`.
+
+Ambos já vêm embutidos em `/bin` (tabela `g_builtin_bins` em
+`fs/vfs.c`) — e **são sincronizados no boot**, inclusive em discos
+já formatados: um executável embutido novo ou alterado substitui o
+de `/bin` automaticamente (arquivos idênticos não são tocados).
+
+### Como recompilar qualquer exemplo (ex.: systest)
+
+```bash
+cd libc && make && cd ..
+CF="-ffreestanding -fno-stack-protector -fno-pic -mno-red-zone \
+    -mno-mmx -mno-sse -mno-sse2 -mcmodel=large -nostdlib \
+    -nodefaultlibs -O2 -Wall -Wextra -std=c11 -I libc/include -m64"
+x86_64-linux-gnu-gcc $CF -c examples/systest/main.c -o /tmp/systest.o
+x86_64-linux-gnu-ld -T libc/hexec.ld -o /tmp/systest.elf \
+    libc/build/crt0.o /tmp/systest.o -L libc/build -lc
+python3 libc/mkhexec.py /tmp/systest.elf examples/systest/systest.hexec
+python3 tools/embed_hexec.py examples/systest/systest.hexec \
+    kernel/generated/systest_hexec_data.h SYSTEST_HEXEC systest_hexec_data
+```
+
+Note o `-mcmodel=large`: é obrigatório (o endereço de carga fica
+acima de 4 GB). Depois, `make` no kernel.
+
 ### Como recompilar este exemplo
 
 ```bash

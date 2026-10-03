@@ -111,6 +111,7 @@ void tasking_init(void) {
         t0->fd_table[fd]  = NULL;
         t0->fd_offset[fd] = 0;
     }
+    t0->cwd              = NULL;
     t0->stdout_owner     = NULL;
     t0->stdout_head      = 0;
     t0->stdout_tail      = 0;
@@ -321,6 +322,7 @@ task_t* task_create(const char* name, task_entry_fn entry_point, void* arg) {
         t->fd_table[fd]  = NULL;
         t->fd_offset[fd] = 0;
     }
+    t->cwd               = NULL;
     t->stdout_owner      = NULL;
     t->stdout_head       = 0;
     t->stdout_tail       = 0;

@@ -34,6 +34,17 @@ extern "C" {
 #define SYS_WRITE_FD 6
 #define SYS_SPAWN 7
 #define SYS_WAITPID 8
+#define SYS_GETPID    9
+#define SYS_YIELD     10
+#define SYS_UPTIME_MS 11
+#define SYS_SLEEP_MS  12
+#define SYS_STAT      13
+#define SYS_READDIR   14
+#define SYS_GETCWD    15
+#define SYS_CHDIR     16
+#define SYS_MKDIR     17
+#define SYS_UNLINK    18
+#define SYS_LSEEK     19
 
 // Flags de open2() — espelham os O_* de kernel/syscall.h.
 #ifndef O_RDONLY

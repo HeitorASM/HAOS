@@ -107,6 +107,7 @@ CXX_SRCS = kernel/memory.cpp      \
            gui/apps/file_manager.cpp \
            gui/elements/taskbar.cpp \
            gui/elements/startmenu.cpp \
+           gui/elements/contextmenu.cpp \
            gui/sidebar_nav.cpp
 
 ASM_OBJS     = $(ASM_SRCS:.asm=.o)

@@ -24,6 +24,9 @@
 #define KEY_HOME        0x90
 #define KEY_END         0x91
 
+#define KEY_SWITCH_WINDOW 0x92  // Alt+Tab (ou Ctrl+Tab) -- próxima janela
+#define KEY_CLOSE_WINDOW  0x93  // Alt+F4 -- fecha a janela em foco
+
 // ASCII de controle padrão já usados pelo teclado (não redefinidos
 // aqui, só documentados para quem for tratar KeyDown num widget):
 //   0x08 = Backspace, 0x0A = Enter/Newline, 0x1B = Esc

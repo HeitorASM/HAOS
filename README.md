@@ -37,11 +37,12 @@ O HAOS é um sistema operacional bare-metal de 64 bits desenvolvido de forma ind
 - **Armazenamento ATA/IDE:** Leitura e escrita PIO em setores de 512 bytes, com identificação LBA28, polling, timeout e tratamento de erros.
 
 ### Interface Gráfica (GUI)
-- **Gerenciador de Janelas (WM):** Sistema de janelas com foco, arraste pelo título, minimização, fechamento e ordem de empilhamento.
+- **Gerenciador de Janelas (WM):** Sistema de janelas com foco, arraste pelo título, minimização, maximização, redimensionamento pelas bordas, fechamento e ordem de empilhamento. Duplo clique na barra de título maximiza/restaura; arrastar a barra até a borda esquerda/direita encaixa a janela na metade da tela (com contorno de pré-visualização) e até a borda superior a maximiza; arrastar uma janela maximizada ou encaixada a "solta" no tamanho original.
 - **Widgets OOP (C++):** Hierarquia orientada a objetos com `Widget` (base abstrata), `Button`, `Label` e `Window` (contêiner).
 - **Desktop com Ícones:** Atalhos clicáveis para Terminal, Sobre, Configurações, Bloco de Notas e Explorador de Arquivos.
 - **Taskbar:** Barra de tarefas com botão Iniciar, clock em tempo real e indicador da janela ativa.
 - **Menu Iniciar:** Menu pop-up com acesso a aplicativos e opção de reinicialização.
+- **Menu de contexto do desktop:** Botão direito sobre a área livre abre Terminal, Editor, Arquivos, Configurações e Sobre.
 - **Explorador de Arquivos:** Navegação pela árvore VFS, retorno ao diretório pai ou à raiz, seleção de itens e abertura de arquivos textuais no Bloco de Notas por duplo clique.
 - **Sistema de Wallpaper:** Suporte a gradiente padrão ou imagens convertidas, com três modos de exibição — Preencher, Centralizar e Lado a lado.
 - **Cursor de Mouse:** Cursor renderizado em hardware com atualização por frame.
@@ -133,8 +134,13 @@ Após converter, adicione os arquivos `.c` gerados ao `Makefile` em `WALLPAPER_S
 | Tecla | Ação |
 | --- | --- |
 | `ESC` | Fechar o menu ativo ou a janela focada |
+| `Alt+Tab` / `Ctrl+Tab` | Alternar para a próxima janela (traz de volta uma minimizada) |
+| `Alt+F4` | Fechar a janela em foco |
 | `Backspace` | Voltar ao diretório pai no Explorador |
 | **Mouse** | Abrir aplicativos pelo desktop/Menu Iniciar, selecionar itens, navegar no Explorador e focar/arrastar janelas |
+| **Botão direito** (desktop) | Menu de contexto com os aplicativos |
+| **Duplo clique** (barra de título) | Maximizar / restaurar a janela |
+| **Arrastar até a borda** | Esquerda/direita: encaixa na metade da tela; topo: maximiza |
 
 O Explorador também possui os botões `Voltar` e `Início`. O duplo clique em um
 arquivo textual abre o conteúdo no Bloco de Notas; arquivos com byte nulo são

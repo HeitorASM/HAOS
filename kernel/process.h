@@ -94,6 +94,12 @@ struct VfsNode;
 task_t* process_create(const char* name, struct VfsNode* executable_file,
                         const char* argv_str, uint64_t argv_len);
 
+// Variante com cwd explícito (NULL = raiz) — usada por SYS_SPAWN para o
+// filho herdar o diretório de trabalho do pai.
+task_t* process_create_with_cwd(const char* name, struct VfsNode* executable_file,
+                                const char* argv_str, uint64_t argv_len,
+                                struct VfsNode* cwd);
+
 // ---- API interna reutilizada por syscall.c (sys_sbrk) ----
 //
 // Estas duas funções eram `static` só de uso interno de

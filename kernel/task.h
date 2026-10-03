@@ -233,6 +233,16 @@ typedef struct task {
                                                        // (VFS_FILE_MAX é 1
                                                        // MB, cabe folgado).
 
+    // ---- Diretório de trabalho (cwd) por processo ----
+    // Base para resolver caminhos RELATIVOS em sys_open/sys_stat/
+    // sys_chdir/etc. Herdado do terminal que lançou o processo (run)
+    // ou do pai (spawn) — ver process_create_with_cwd. NULL significa
+    // "raiz" (kernel threads, task 0). Pode apontar para um nó já
+    // removido (VfsNode::removed): quem usa deve passar por task_cwd()
+    // em syscall.c, que cai para a raiz nesse caso. Os nós do VFS
+    // nunca são liberados, então o ponteiro nunca fica inválido.
+    struct VfsNode* cwd;
+
     // ---- Canal de saída (stdout) para o terminal que o lançou ----
     // Substitui a abordagem anterior de sys_write desenhar direto no
     // framebuffer global: isso competia visualmente com a GUI (o
@@ -562,7 +572,7 @@ uint64_t task_stdin_read(task_t* t, uint8_t* out_buf, uint64_t max_len);
 // manifestar como "a saída do processo sumiu" três camadas de
 // abstração depois. Ver kernel/task.c e gui/apps/terminal.cpp para
 // os pontos de uso.
-#define TASK_T_EXPECTED_SIZE 824
+#define TASK_T_EXPECTED_SIZE 832
 
 #ifdef __cplusplus
   #define TASK_LAYOUT_GUARD(unique_name) \
