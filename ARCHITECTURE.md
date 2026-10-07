@@ -38,7 +38,7 @@ graph TB
     end
     
     subgraph FS[" Virtual File System"]
-        VFS["VFS Tree Manager<br/>Max: 32 nodes<br/>Max file: 256 bytes"]
+        VFS["VFS Tree Manager<br/>128 itens/dir · 1 MB/arquivo<br/>dono + permissões (fs/perm.h)"]
     end
     
     subgraph GUI[" Interface Gráfica"]

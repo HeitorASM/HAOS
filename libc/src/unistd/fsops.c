@@ -38,3 +38,9 @@ long lseek(int fd, long offset, int whence) {
     if (fd < 0) return -1;
     return haos_syscall(SYS_LSEEK, fd, offset, whence, 0, 0);
 }
+
+// Só o dono do arquivo pode mudar as permissões. mode: 0..01777 (octal).
+int chmod(const char* path, unsigned int mode) {
+    if (!path) return -1;
+    return (int)haos_syscall(SYS_CHMOD, (long)path, (long)strlen(path), (long)mode, 0, 0);
+}

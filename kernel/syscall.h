@@ -165,7 +165,12 @@ extern "C" {
                             // inexistente/fechada). timeout_ms = 0 só consulta;
                             // 0xFFFFFFFF espera para sempre.
 #define SYS_WIN_INFO    26 // sys_win_info(handle, haos_win_info_t* out) -> 0 ou -1.
-#define SYS_COUNT     27
+#define SYS_GETUID      27 // sys_getuid() -> uid do processo (nunca 0 em processos de usuário).
+#define SYS_GETGID      28 // sys_getgid() -> gid do processo.
+#define SYS_CHMOD       29 // sys_chmod(const char* path, uint64_t path_len, uint64_t mode)
+                            // -> 0 ou -1. Só o DONO do arquivo muda as permissões;
+                            // mode = 0..01777 (rwxrwxrwx + sticky).
+#define SYS_COUNT     30
 
 // ---- whence de sys_lseek ----
 #define SEEK_SET  0

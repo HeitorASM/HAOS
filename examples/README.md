@@ -20,7 +20,8 @@ Roda ~50 verificações e imprime `[PASS]`/`[FAIL]` para cada uma:
 `getcwd`, `chdir`, `mkdir`, `unlink`, `lseek`, caminhos relativos,
 fd de arquivo removido e as correções de segurança do kernel (nome de
 arquivo longo, ponteiro de kernel que "dá a volta", buffer somente
-leitura). **Rode depois de qualquer mudança em syscalls**:
+leitura). Não faz parte da imagem padrão. Para testar depois de uma mudança
+em syscalls, gere-o com `bash tools/build_apps.sh systest` e rode
 `run systest.hexec` — o resultado esperado termina com `TUDO OK`.
 
 ## winpaint/ — janela gráfica (SYS_WIN_*)
@@ -33,20 +34,20 @@ Mostra o ciclo completo: `win_create`, desenho (`win_fill_rect`,
 teclado, redimensionamento e ao fechamento da janela pelo X.
 
 **Não vem pré-compilado**: gere com `bash tools/build_apps.sh` (compila a
-libc, o systest, o ls e o winpaint, e cria os headers em
+libc e o winpaint, e cria o header em
 `kernel/generated/`) e depois `make` no kernel — o `winpaint.hexec` entra
 em `/bin` no boot. (Sem o header gerado, o kernel simplesmente compila
 sem ele.)
 
 ## ls/ — lista diretórios
 
-`run ls.hexec` (diretório atual), `run ls.hexec /bin`,
-`run ls.hexec notes.txt`. Exemplo de uso de `readdir()`/`stat()`.
+`ls` é um exemplo opcional de uso de `readdir()`/`stat()`, não incluído na
+imagem padrão. Para gerá-lo, use `bash tools/build_apps.sh ls`; depois rode
+`run ls.hexec` (diretório atual), `run ls.hexec /bin` ou
+`run ls.hexec notes.txt`.
 
-Ambos já vêm embutidos em `/bin` (tabela `g_builtin_bins` em
-`fs/vfs.c`) — e **são sincronizados no boot**, inclusive em discos
-já formatados: um executável embutido novo ou alterado substitui o
-de `/bin` automaticamente (arquivos idênticos não são tocados).
+Os exemplos opcionais podem ser gerados individualmente passando seus nomes
+para `tools/build_apps.sh`; apenas o `winpaint` é gerado pelo comando padrão.
 
 ### Como recompilar qualquer exemplo (ex.: systest)
 

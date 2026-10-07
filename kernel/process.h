@@ -94,8 +94,15 @@ struct VfsNode;
 task_t* process_create(const char* name, struct VfsNode* executable_file,
                         const char* argv_str, uint64_t argv_len);
 
-// Variante com cwd explícito (NULL = raiz) — usada por SYS_SPAWN para o
-// filho herdar o diretório de trabalho do pai.
+// Variante completa: cwd explícito + identidade (uid/gid) do processo.
+// É a única que de fato cria o processo; as outras duas são atalhos.
+// `uid` NÃO deve ser 0 para processos de usuário (ver kernel/user.h).
+task_t* process_create_as(const char* name, struct VfsNode* executable_file,
+                          const char* argv_str, uint64_t argv_len,
+                          struct VfsNode* cwd, uint32_t uid, uint32_t gid);
+
+// Variante com cwd explícito (NULL = raiz) — herda uid/gid da task atual.
+// SYS_SPAWN usa process_create_as com o uid/gid do pai.
 task_t* process_create_with_cwd(const char* name, struct VfsNode* executable_file,
                                 const char* argv_str, uint64_t argv_len,
                                 struct VfsNode* cwd);

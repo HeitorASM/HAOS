@@ -1,6 +1,7 @@
 // ============================================================
 //  kernel/process.c — Loader de executáveis HEXEC + processos
 // ============================================================
+#include "user.h"
 #include "process.h"
 #include "hexec.h"
 #include "memory.h"
@@ -215,9 +216,9 @@ uint64_t pages_needed_for(uint64_t bytes) {
 // isto para o filho herdar o cwd do PAI desde o primeiro instante —
 // atribuir depois de process_create deixaria uma janela em que o
 // filho já pode estar rodando com o cwd errado.
-task_t* process_create_with_cwd(const char* name, VfsNode* executable_file,
+task_t* process_create_as(const char* name, VfsNode* executable_file,
                         const char* argv_str, uint64_t argv_len,
-                        VfsNode* cwd) {
+                        VfsNode* cwd, uint32_t uid, uint32_t gid) {
     hexec_info_t info;
     if (!parse_hexec_header(executable_file, &info)) return NULL;
 
@@ -569,6 +570,10 @@ task_t* process_create_with_cwd(const char* name, VfsNode* executable_file,
                                         // processo pede para crescer.
     t->heap_limit        = heap_limit;
     t->cwd               = cwd;
+    // Identidade definida ANTES de task_publish_ready (mais abaixo): o filho
+    // nunca chega a rodar com o uid de uma task antiga que ocupava o slot.
+    t->uid               = uid;
+    t->gid               = gid;
     for (int fd = 0; fd < TASK_MAX_OPEN_FILES; fd++) {
         t->fd_table[fd]  = NULL;
         t->fd_offset[fd] = 0;
@@ -600,8 +605,20 @@ _Noreturn void process_bootstrap(void) {
 
 // Versão original: o processo herda o cwd global do VFS (o do
 // terminal/GUI que o lançou via `run`).
+// Variante que herda a identidade da task ATUAL (compatibilidade com
+// chamadores antigos). SYS_SPAWN usa process_create_as com o uid do pai.
+task_t* process_create_with_cwd(const char* name, VfsNode* executable_file,
+                        const char* argv_str, uint64_t argv_len,
+                        VfsNode* cwd) {
+    task_t* cur = task_current();
+    uint32_t uid = cur ? cur->uid : session_uid();
+    uint32_t gid = cur ? cur->gid : session_gid();
+    return process_create_as(name, executable_file, argv_str, argv_len, cwd, uid, gid);
+}
+
+// Lançado pela GUI/terminal: o processo pertence ao usuário LOGADO.
 task_t* process_create(const char* name, VfsNode* executable_file,
                         const char* argv_str, uint64_t argv_len) {
-    return process_create_with_cwd(name, executable_file, argv_str, argv_len,
-                                   vfs_cwd());
+    return process_create_as(name, executable_file, argv_str, argv_len,
+                             vfs_cwd(), session_uid(), session_gid());
 }

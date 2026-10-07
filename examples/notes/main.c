@@ -1,6 +1,7 @@
 // examples/notes/main.c — testa scanf + escrita de arquivo (SYS_WRITE_FD).
 //
-// Pergunta um nome de arquivo (relativo a /home/user) e uma palavra,
+// Pergunta um nome de arquivo (relativo ao diretório atual — por padrão a
+// pasta pessoal do usuário que rodou o programa) e uma palavra,
 // grava "<palavra>\n" nele com open2(O_WRONLY|O_CREAT|O_TRUNC) +
 // write_fd(), e depois reabre para leitura e imprime o que ficou
 // gravado, confirmando que a escrita realmente chegou ao VFS.
@@ -20,7 +21,9 @@ int main(void) {
     printf("Uma palavra para gravar: ");
     if (scanf("%s", word) != 1) { puts("entrada invalida"); return 1; }
 
-    snprintf(path, sizeof(path), "/home/user/%s", name);
+    char cwd[96];
+    if (!getcwd(cwd, sizeof(cwd))) { puts("erro: getcwd falhou"); return 1; }
+    snprintf(path, sizeof(path), "%s/%s", cwd, name);
 
     int fd = open2(path, O_WRONLY | O_CREAT | O_TRUNC);
     if (fd < 0) { puts("erro: nao consegui abrir para escrita"); return 1; }

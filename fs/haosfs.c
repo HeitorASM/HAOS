@@ -27,6 +27,13 @@ typedef struct {
     uint32_t generation;
 } HaosSuperblock;
 
+// Dono/permissões vivem no espaço antes "reservado" do inode — o tamanho
+// (256 bytes) e o layout dos campos antigos NÃO mudam, então discos
+// formatados antes desta versão continuam montando normalmente. Um inode
+// antigo tem esses bytes zerados (perm_magic != HAOSFS_PERM_MAGIC) e
+// recebe permissões padrão na montagem (root:root, 0755/0644).
+#define HAOSFS_PERM_MAGIC 0x314D5250U   // "PRM1"
+
 typedef struct {
     uint32_t used;
     uint32_t type;
@@ -35,8 +42,16 @@ typedef struct {
     uint32_t extent_count;
     uint32_t extents[HAOSFS_MAX_EXTENTS][2];
     char     name[VFS_NAME_MAX];
-    uint8_t  reserved[108];
+    uint32_t perm_magic;     // HAOSFS_PERM_MAGIC se uid/gid/mode abaixo são válidos
+    uint32_t uid;
+    uint32_t gid;
+    uint16_t mode;
+    uint16_t perm_pad;
+    uint8_t  reserved[92];
 } HaosInode;
+
+_Static_assert(sizeof(HaosInode) == HAOSFS_INODE_SIZE,
+               "HaosInode precisa ter exatamente 256 bytes (formato em disco)");
 
 typedef struct {
     BlockDevice* device;
@@ -217,6 +232,10 @@ static bool save_node(HaosSaveContext* context, VfsNode* node,
     inode->parent = parent;
     inode->size = node->type == VFS_FILE ? node->size : 0;
     kstrncpy(inode->name, node->name, VFS_NAME_MAX - 1);
+    inode->perm_magic = HAOSFS_PERM_MAGIC;
+    inode->uid  = node->uid;
+    inode->gid  = node->gid;
+    inode->mode = node->mode;
 
     if (node->type == VFS_FILE) {
         uint32_t blocks = (node->size + HAOSFS_BLOCK_SIZE - 1) / HAOSFS_BLOCK_SIZE;
@@ -324,6 +343,19 @@ static bool valid_inode(const HaosInode* inode, const HaosSuperblock* super) {
     return inode->type == VFS_DIR || inode->size <= capacity;
 }
 
+// Copia dono/permissões do inode para o nó do VFS. Inode sem perm_magic
+// (disco de uma versão anterior) => padrão root:root 0755/0644. Os
+// executáveis ".hexec" não precisam de tratamento especial: rodar um
+// programa só exige poder LER o arquivo (ver fs/perm.h).
+static void apply_inode_perms(VfsNode* node, const HaosInode* inode) {
+    if (inode->perm_magic == HAOSFS_PERM_MAGIC) {
+        vfs_set_owner(node, inode->uid, inode->gid, inode->mode);
+    } else {
+        vfs_set_owner(node, 0, 0,
+                      node->type == VFS_DIR ? VFS_MODE_DIR_DEFAULT : VFS_MODE_FILE_DEFAULT);
+    }
+}
+
 bool haosfs_mount(BlockDevice* device, VfsNode* root) {
     if (!device || !root || haosfs_probe(device) != HAOSFS_VALID) return false;
 
@@ -349,6 +381,7 @@ bool haosfs_mount(BlockDevice* device, VfsNode* root) {
         ok = false;
     if (ok) {
         root->fs_inode = 0;
+        apply_inode_perms(root, &inodes[0]);
         nodes[0] = root;
         for (uint32_t id = 1; id < super.inode_count; id++) {
             HaosInode* inode = &inodes[id];
@@ -369,6 +402,7 @@ bool haosfs_mount(BlockDevice* device, VfsNode* root) {
                 break;
             }
             node->fs_inode = id;
+            apply_inode_perms(node, inode);
             nodes[id] = node;
             if (inode->type == VFS_FILE && !read_file_data(device, &super, inode, node)) {
                 ok = false;

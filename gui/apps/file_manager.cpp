@@ -8,6 +8,8 @@
 #include "../../kernel/types.h"
 #include "../../kernel/lang.h"
 #include "terminal.h"
+#include "../../fs/perm.h"
+#include "../../kernel/user.h"
 
 extern "C" volatile uint64_t timer_ticks;
 
@@ -164,6 +166,12 @@ public:
     void open_selected(VfsNode* node) {
         if (!node) return;
         if (node->type == VFS_DIR) {
+            // Entrar numa pasta exige R (listar) e X (atravessar).
+            Cred cred = session_cred();
+            if (!perm_allows(node, &cred, PERM_R | PERM_X)) {
+                set_status(tr(STR_PERM_DENIED));
+                return;
+            }
             current_dir = node;
             selected = nullptr;
             last_clicked = nullptr;
@@ -199,6 +207,13 @@ public:
                 set_status(tr(STR_FILE_MANAGER_EXEC_FAILED));
             }
             return;
+        }
+        {
+            Cred cred = session_cred();
+            if (!perm_allows(node, &cred, PERM_R)) {
+                set_status(tr(STR_PERM_DENIED));
+                return;
+            }
         }
         if (!file_manager_is_text(node)) {
             set_status(tr(STR_FILE_MANAGER_BINARY));
@@ -245,7 +260,13 @@ public:
         }
         if (my >= top + 4 && my < top + TOOLBAR_H - 4 &&
             mx >= home_x && mx < home_x + TOOLBAR_BUTTON_W) {
-            current_dir = vfs_root();
+            // "Home" leva à pasta pessoal do usuário logado (antes ia para a
+            // raiz, quando todos compartilhavam o mesmo /home/user).
+            Cred hcred = session_cred();
+            VfsNode* home = nullptr;
+            if (vfs_resolve_as(&hcred, vfs_root(), session_home(), &home) != PERM_OK || !home)
+                home = vfs_root();
+            current_dir = home;
             selected = nullptr;
             last_clicked = nullptr;
             status[0] = 0;

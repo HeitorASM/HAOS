@@ -3,7 +3,7 @@
 # headers embutidos em kernel/generated/ — um comando só, em vez dos passos
 # manuais de libc/README.md.
 #
-#   bash tools/build_apps.sh                 # systest ls winpaint
+#   bash tools/build_apps.sh                 # winpaint
 #   bash tools/build_apps.sh winpaint        # só os nomes listados
 #
 # Para cada <nome> lê examples/<nome>/main.c e gera:
@@ -16,7 +16,7 @@ cd "$(dirname "$0")/.."
 
 CROSS="${CROSS:-x86_64-linux-gnu}"
 CC="$CROSS-gcc"; LD="$CROSS-ld"
-APPS=("$@"); [ ${#APPS[@]} -eq 0 ] && APPS=(systest ls winpaint)
+APPS=("$@"); [ ${#APPS[@]} -eq 0 ] && APPS=(winpaint)
 
 CF="-ffreestanding -fno-stack-protector -fno-pic -mno-red-zone -mno-mmx -mno-sse -mno-sse2
     -mcmodel=large -nostdlib -nodefaultlibs -O2 -Wall -Wextra -std=c11 -I libc/include -m64"

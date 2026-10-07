@@ -24,6 +24,8 @@
 #include "process.h"
 #include "scheduler.h"
 #include "../fs/vfs.h"
+#include "../fs/perm.h"
+#include "user.h"
 #include "../gui/core/userwin.h"
 
 extern void syscall_entry(void); // definido em syscall_asm.asm
@@ -314,6 +316,14 @@ static bool copy_user_path(uint64_t user_ptr, uint64_t len, char* out) {
     return true;
 }
 
+// Credenciais do processo que fez a syscall. Sem bypass: processos de
+// usuário nunca têm uid 0 (ver kernel/user.h), então TODA syscall de
+// arquivo obedece as permissões do VFS — o isolamento entre contas é
+// imposto aqui, na fronteira Ring 3 -> kernel.
+static Cred task_cred(task_t* t) {
+    return cred_for_ids(t->uid, t->gid);
+}
+
 // Separa `path` em "diretório pai (já existente)" + "nome novo".
 // MODIFICA `path` (corta no último '/'). Rejeita: pai inexistente ou
 // não-diretório, nome vazio (caminho terminado em '/'), "." e "..",
@@ -336,7 +346,8 @@ static bool resolve_parent(task_t* t, char* path, uint64_t path_len,
         fname  = path + 1;
     } else {
         path[last_slash] = '\0';           // corta no último '/'
-        parent = vfs_resolve(task_cwd(t), path);
+        Cred cred = task_cred(t);          // exige X em cada diretório do caminho
+        if (vfs_resolve_as(&cred, task_cwd(t), path, &parent) != PERM_OK) return false;
         fname  = path + last_slash + 1;
     }
 
@@ -365,7 +376,16 @@ static uint64_t sys_open(uint64_t user_path_ptr, uint64_t path_len, uint64_t fla
     // Caminhos relativos são resolvidos a partir do cwd DESTE processo
     // (herdado do terminal/pai; muda com SYS_CHDIR). Caminhos
     // absolutos ("/...") continuam funcionando como antes.
-    VfsNode* node = vfs_resolve(task_cwd(t), path);
+    //
+    // vfs_resolve_as exige permissão de busca (X) em cada diretório do
+    // caminho: sem ela falha com PERM_EACCES e NÃO caímos no O_CREAT
+    // (criar um arquivo "do outro lado" de um diretório proibido seria
+    // contornar a proteção).
+    Cred cred = task_cred(t);
+    VfsNode* node = NULL;
+    int rr = vfs_resolve_as(&cred, task_cwd(t), path, &node);
+    if (rr == PERM_EACCES) return (uint64_t)-1;
+    if (rr != PERM_OK) node = NULL;
 
     if (!node && (flags & O_CREAT)) {
         // Arquivo não existe e o processo pediu criação: separa o
@@ -376,10 +396,15 @@ static uint64_t sys_open(uint64_t user_path_ptr, uint64_t path_len, uint64_t fla
         const char* fname;
         if (!resolve_parent(t, path, path_len, &parent, &fname)) return (uint64_t)-1;
 
-        node = vfs_touch(parent, fname);
+        node = vfs_touch_as(&cred, parent, fname, NULL); // exige W+X no pai; dono = este processo
     }
 
     if (!node || node->type != VFS_FILE) return (uint64_t)-1;
+
+    // Permissão do próprio arquivo: leitura sempre; escrita se O_WRONLY.
+    // (Num arquivo recém-criado o dono tem rw-, então passa.)
+    if (!perm_allows(node, &cred, PERM_R)) return (uint64_t)-1;
+    if ((flags & O_WRONLY) && !perm_allows(node, &cred, PERM_W)) return (uint64_t)-1;
 
     // O_TRUNC: só tem efeito se também abriu para escrita — truncar
     // num open somente-leitura seria destrutivo sem que o processo
@@ -622,8 +647,13 @@ static uint64_t sys_spawn(uint64_t user_path_ptr, uint64_t path_len,
     path[path_len] = '\0';
 
     // Caminho relativo: a partir do cwd do PAI (o filho herda o mesmo cwd).
-    VfsNode* node = vfs_resolve(task_cwd(parent), path);
+    // Rodar um programa exige poder LER o arquivo (e atravessar os diretórios
+    // do caminho) — o filho herda a identidade do pai, nunca ganha privilégio.
+    Cred pcred = task_cred(parent);
+    VfsNode* node = NULL;
+    if (vfs_resolve_as(&pcred, task_cwd(parent), path, &node) != PERM_OK) return (uint64_t)-1;
     if (!node || node->type != VFS_FILE) return (uint64_t)-1;
+    if (!perm_allows(node, &pcred, PERM_R)) return (uint64_t)-1;
 
     char argv_buf[SYS_SPAWN_MAX_ARGV + SYS_OPEN_MAX_PATH + 2];
     uint64_t alen = 0;
@@ -645,7 +675,8 @@ static uint64_t sys_spawn(uint64_t user_path_ptr, uint64_t path_len,
         if (path[i] == '/') task_name = path + i + 1;
     }
 
-    task_t* child = process_create_with_cwd(task_name, node, argv_buf, alen, task_cwd(parent));
+    task_t* child = process_create_as(task_name, node, argv_buf, alen, task_cwd(parent),
+                                      parent->uid, parent->gid);
     if (!child) return (uint64_t)-1;
 
     child->stdout_owner = parent->stdout_owner;
@@ -794,8 +825,10 @@ static uint64_t sys_stat(uint64_t user_path_ptr, uint64_t path_len, uint64_t use
     if (!copy_user_path(user_path_ptr, path_len, path)) return (uint64_t)-1;
     if (!validate_user_range_writable(user_out_ptr, sizeof(haos_stat_t))) return (uint64_t)-1;
 
-    VfsNode* n = vfs_resolve(task_cwd(task_current()), path);
-    if (!n) return (uint64_t)-1;
+    Cred cred = task_cred(task_current());
+    VfsNode* n = NULL;
+    if (vfs_resolve_as(&cred, task_cwd(task_current()), path, &n) != PERM_OK || !n)
+        return (uint64_t)-1;
 
     haos_stat_t st;
     st.type = haos_type_of(n);
@@ -810,8 +843,11 @@ static uint64_t sys_readdir(uint64_t user_path_ptr, uint64_t path_len,
     if (!copy_user_path(user_path_ptr, path_len, path)) return (uint64_t)-1;
     if (!validate_user_range_writable(user_out_ptr, sizeof(haos_dirent_t))) return (uint64_t)-1;
 
-    VfsNode* dir = vfs_resolve(task_cwd(task_current()), path);
+    Cred cred = task_cred(task_current());
+    VfsNode* dir = NULL;
+    if (vfs_resolve_as(&cred, task_cwd(task_current()), path, &dir) != PERM_OK) return (uint64_t)-1;
     if (!dir || dir->type != VFS_DIR) return (uint64_t)-1;
+    if (!perm_allows(dir, &cred, PERM_R)) return (uint64_t)-1;       // listar exige R
     if (index >= dir->child_count) return 0; // fim da listagem
 
     const VfsNode* c = dir->children[index];
@@ -839,8 +875,11 @@ static uint64_t sys_chdir(uint64_t user_path_ptr, uint64_t path_len) {
     if (!copy_user_path(user_path_ptr, path_len, path)) return (uint64_t)-1;
 
     task_t* t = task_current();
-    VfsNode* n = vfs_resolve(task_cwd(t), path);
+    Cred cred = task_cred(t);
+    VfsNode* n = NULL;
+    if (vfs_resolve_as(&cred, task_cwd(t), path, &n) != PERM_OK) return (uint64_t)-1;
     if (!n || n->type != VFS_DIR) return (uint64_t)-1;
+    if (!perm_allows(n, &cred, PERM_X)) return (uint64_t)-1;         // entrar exige X
     t->cwd = n;
     return 0;
 }
@@ -852,18 +891,39 @@ static uint64_t sys_mkdir(uint64_t user_path_ptr, uint64_t path_len) {
     VfsNode* parent;
     const char* name;
     if (!resolve_parent(task_current(), path, path_len, &parent, &name)) return (uint64_t)-1;
-    return vfs_mkdir(parent, name) ? 0 : (uint64_t)-1;
+    Cred cred = task_cred(task_current());
+    int err = PERM_OK;
+    if (vfs_find_child(parent, name)) return (uint64_t)-1;           // já existe (como antes)
+    return vfs_mkdir_as(&cred, parent, name, &err) ? 0 : (uint64_t)-1;
 }
 
 static uint64_t sys_unlink(uint64_t user_path_ptr, uint64_t path_len) {
     char path[SYS_OPEN_MAX_PATH];
     if (!copy_user_path(user_path_ptr, path_len, path)) return (uint64_t)-1;
 
-    VfsNode* n = vfs_resolve(task_cwd(task_current()), path);
+    Cred cred = task_cred(task_current());
+    VfsNode* n = NULL;
+    if (vfs_resolve_as(&cred, task_cwd(task_current()), path, &n) != PERM_OK) return (uint64_t)-1;
     if (!n || !n->parent || n == vfs_root()) return (uint64_t)-1;     // inexistente / raiz
     if (n->type == VFS_DIR && n->child_count > 0) return (uint64_t)-1; // só diretório VAZIO
     if (n == vfs_cwd()) return (uint64_t)-1;                           // cwd global do terminal
-    return vfs_rm(n) ? 0 : (uint64_t)-1;
+    // W+X no diretório pai (+ regra sticky de /tmp): ver vfs_remove_as.
+    return vfs_remove_as(&cred, n) == PERM_OK ? 0 : (uint64_t)-1;
+}
+
+static uint64_t sys_getuid(void) { return task_current()->uid; }
+static uint64_t sys_getgid(void) { return task_current()->gid; }
+
+static uint64_t sys_chmod(uint64_t user_path_ptr, uint64_t path_len, uint64_t mode) {
+    char path[SYS_OPEN_MAX_PATH];
+    if (!copy_user_path(user_path_ptr, path_len, path)) return (uint64_t)-1;
+    if (mode > VFS_MODE_MASK) return (uint64_t)-1;
+
+    task_t* t = task_current();
+    Cred cred = task_cred(t);
+    VfsNode* n = NULL;
+    if (vfs_resolve_as(&cred, task_cwd(t), path, &n) != PERM_OK || !n) return (uint64_t)-1;
+    return vfs_chmod_as(&cred, n, (uint16_t)mode) == PERM_OK ? 0 : (uint64_t)-1;
 }
 
 static uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
@@ -1035,6 +1095,9 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_WIN_BLIT:    return sys_win_blit(a1, a2);
         case SYS_WIN_EVENT:   return sys_win_event(a1, a2, a3);
         case SYS_WIN_INFO:    return sys_win_info(a1, a2);
+        case SYS_GETUID:      return sys_getuid();
+        case SYS_GETGID:      return sys_getgid();
+        case SYS_CHMOD:       return sys_chmod(a1, a2, a3);
         default:        return (uint64_t)-1; // syscall desconhecida
     }
 }

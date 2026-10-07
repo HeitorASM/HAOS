@@ -6,6 +6,8 @@
 #include "../../kernel/types.h"
 #include "../../kernel/keyboard.h"
 #include "../../fs/vfs.h"
+#include "../../fs/perm.h"
+#include "../../kernel/user.h"
 #include "../../kernel/lang.h"
 #include "../widgets_basic.h"
 
@@ -138,6 +140,11 @@ static void editor_load_from_node(EditorState* e, VfsNode* node) {
 
 static bool editor_write_to_file(EditorState* e) {
     if (!e->file) return false;
+    // Salvar exige permissão de ESCRITA no arquivo (o editor age em nome do
+    // usuário logado). Sem isso o Bloco de Notas deixava qualquer conta
+    // sobrescrever arquivos alheios.
+    Cred cred = session_cred();
+    if (!perm_allows(e->file, &cred, PERM_W)) return false;
 
     uint32_t total = 0;
     for (int i = 0; i < e->num_lines; i++)
@@ -166,7 +173,8 @@ static bool editor_save(EditorState* e) {
     if (!e->filename[0]) return false;
 
     if (!e->file) {
-        e->file = vfs_touch(vfs_cwd(), e->filename);
+        Cred cred = session_cred();
+        e->file = vfs_touch_as(&cred, vfs_cwd(), e->filename, nullptr); // exige W+X na pasta
         if (!e->file) return false;
     }
     return editor_write_to_file(e);
@@ -766,7 +774,8 @@ static bool editor_save_as(EditorState* e, EditorWindow* win, const char* name) 
     kstrncpy(e->filename, name, VFS_NAME_MAX - 1);
     e->filename[VFS_NAME_MAX - 1] = 0;
 
-    e->file = vfs_touch(vfs_cwd(), e->filename);
+    Cred cred = session_cred();
+    e->file = vfs_touch_as(&cred, vfs_cwd(), e->filename, nullptr);
     if (!e->file) return false;
 
     bool ok = editor_write_to_file(e);
@@ -823,8 +832,13 @@ Window* editor_create(int32_t x, int32_t y, const char* path) {
 
     if (path && path[0]) {
         kstrcpy(e->filename, path);
-        VfsNode* node = vfs_resolve(vfs_cwd(), path);
-        if (node && node->type == VFS_FILE) {
+        Cred cred = session_cred();
+        VfsNode* node = nullptr;
+        int rr = vfs_resolve_as(&cred, vfs_cwd(), path, &node);
+        // Só carrega se o usuário pode LER (e atravessar os diretórios do
+        // caminho). Sem permissão a janela abre vazia e salvar falha.
+        if (rr == PERM_OK && node && node->type == VFS_FILE &&
+            perm_allows(node, &cred, PERM_R)) {
             e->file = node;
             editor_load_from_node(e, node);
         }

@@ -51,10 +51,13 @@ void* sbrk(long increment);
 int open(const char* path);
 
 // Versão de open() com flags (O_RDONLY, O_WRONLY, O_CREAT, O_TRUNC —
-// ver haos/syscall.h). Ex.: open2("/home/user/saida.txt",
+// ver haos/syscall.h). Ex.: open2("/tmp/saida.txt",
 // O_WRONLY | O_CREAT | O_TRUNC) cria (ou esvazia) o arquivo e o abre
-// para escrita via write_fd(). O caminho deve ser absoluto, e o
-// diretório pai já precisa existir. Retorna o fd (>= 0) ou -1.
+// para escrita via write_fd(). O diretório pai já precisa existir.
+// Retorna o fd (>= 0) ou -1 — inclusive se você não tiver PERMISSÃO:
+// ler exige R no arquivo, escrever exige W, criar exige W+X no diretório
+// e atravessar um caminho exige X em cada pasta (ver fs/perm.h). Seu
+// usuário (getuid()) só enxerga a própria pasta pessoal e /tmp.
 int open2(const char* path, int flags);
 
 // Flags aceitas por open2() — mesmos valores de kernel/syscall.h.
@@ -116,6 +119,15 @@ ssize_t read(int fd, void* buf, size_t count);
 // Id do processo atual — o mesmo valor que spawn() devolve ao pai e
 // que waitpid() espera.
 int getpid(void);
+
+// Dono (uid) e grupo (gid) do processo. Programas de usuário NUNCA têm uid 0:
+// o sistema inteiro só é "root" no próprio kernel. Cada conta tem uid >= 1000.
+int getuid(void);
+int getgid(void);
+
+// Muda as permissões de um arquivo/diretório (estilo Unix, ex.: 0644, 0600).
+// Só o DONO pode. Retorna 0 ou -1 (sem permissão / não existe).
+int chmod(const char* path, unsigned int mode);
 
 // Cede a CPU voluntariamente.
 void yield(void);

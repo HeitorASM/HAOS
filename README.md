@@ -192,6 +192,22 @@ tratados como binários e não são abertos pelo editor.
 | `stat <arq>` | Exibe metadados do nó VFS |
 | `rm <nome>` | Remove arquivo ou diretório |
 | `edit <nome>` | Abre o Bloco de Notas com o arquivo |
+| `ls -l [dir]` | Lista com permissões e dono |
+
+### Usuários e permissões
+
+| Comando | Descrição |
+| --- | --- |
+| `whoami` / `id` | Usuário atual / uid, gid e privilégios |
+| `users` | Lista as contas |
+| `adduser <nome> [admin]` | Cria conta (só administrador; senha mascarada) |
+| `deluser <nome>` | Remove conta (só administrador) |
+| `passwd [nome]` | Troca a senha |
+| `chmod <octal> <nome>` | Muda permissões (só o dono) |
+| `chown <usuário> <nome>` | Muda o dono (só administrador) |
+
+Detalhes do modelo de contas, permissões, migração e testes em
+[docs/USUARIOS_E_PERMISSOES.md](docs/USUARIOS_E_PERMISSOES.md).
 
 ---
 
@@ -211,7 +227,7 @@ arquivos persistentes.
 2. **Controlador:** O driver atual suporta ATA/IDE PIO, não AHCI/SATA nativo.
 3. **Particionamento:** O HAOSFS usa o volume inteiro e ainda não lê MBR ou GPT.
 4. **Robustez:** Ainda não há journaling nem recuperação garantida se a energia for interrompida durante uma gravação.
-5. **Isolamento de Processos:** O sistema opera integralmente em Ring 0 (Kernel Mode) sem separação de espaço de usuário e multitarefa preemptiva.
+5. **Isolamento de Processos:** Programas `.hexec` rodam em Ring 3 com espaço de endereçamento próprio e scheduler preemptivo, e agora também com identidade (`uid`/`gid`) e permissões de arquivo. Ainda não há grupos compartilhados, nem configurações por usuário (tema/idioma/wallpaper são globais).
 6. **Drivers:** Ainda não há suporte a USB, PCI, ACPI avançado ou som.
 
 ---

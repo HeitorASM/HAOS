@@ -3,13 +3,7 @@
 #include "haosfs.h"
 #include "../drivers/ata_pio.h"
 #include "../kernel/generated/hello_hexec_data.h"
-#include "../kernel/generated/hello_data_hexec_data.h"
-#include "../kernel/generated/hello_full_hexec_data.h"
 #include "../kernel/generated/calc_hexec_data.h"
-#include "../kernel/generated/notes_hexec_data.h"
-#include "../kernel/generated/launcher_hexec_data.h"
-#include "../kernel/generated/systest_hexec_data.h"
-#include "../kernel/generated/ls_hexec_data.h"
 
 // winpaint (janela gráfica Ring 3) só entra se o header GERADO existir —
 // ele é criado por `bash tools/build_apps.sh`. Assim o kernel compila
@@ -31,9 +25,31 @@ static VfsNode* g_root = NULL;
 static VfsNode* g_cwd  = NULL;
 static bool g_persistent = false;
 
+static int  g_batch_depth = 0;
+static bool g_batch_dirty = false;
+
 static bool vfs_persist(void) {
     if (!g_persistent) return true;
+    if (g_batch_depth > 0) { g_batch_dirty = true; return true; }
     return haosfs_save(ata_pio_device(), g_root);
+}
+
+void vfs_batch_begin(void) { g_batch_depth++; }
+
+bool vfs_batch_end(void) {
+    if (g_batch_depth > 0) g_batch_depth--;
+    if (g_batch_depth == 0 && g_batch_dirty) {
+        g_batch_dirty = false;
+        return g_persistent ? haosfs_save(ata_pio_device(), g_root) : true;
+    }
+    return true;
+}
+
+void vfs_set_owner(VfsNode* node, uint32_t uid, uint32_t gid, uint16_t mode) {
+    if (!node) return;
+    node->uid  = uid;
+    node->gid  = gid;
+    node->mode = (uint16_t)(mode & VFS_MODE_MASK);
 }
 
 // ---- Helpers internos ---------------------------------------
@@ -55,6 +71,11 @@ static VfsNode* vfs_alloc_node(const char* name, VfsType type) {
     n->capacity = 0;
     n->data = NULL;
     n->fs_inode = 0;
+    // Padrão: dono root. Código que age em nome de um usuário usa
+    // vfs_mkdir_as/vfs_touch_as (fs/perm.h), que ajustam o dono.
+    n->uid  = 0;
+    n->gid  = 0;
+    n->mode = (type == VFS_DIR) ? VFS_MODE_DIR_DEFAULT : VFS_MODE_FILE_DEFAULT;
     n->parent = NULL;
     n->child_count = 0;
     return n;
@@ -81,12 +102,8 @@ static bool vfs_add_child(VfsNode* parent, VfsNode* child) {
 // '\0' — inaceitável para código de máquina). Rode com
 // "run <nome>.hexec" no terminal.
 //
-//   hello / hello_data / hello_full — exemplos de libc, .data/.bss, syscalls
+//   hello     — exemplo mínimo da libc
 //   calc      — calculadora (scanf)
-//   notes     — scanf + escrita de arquivo (open2/write_fd)
-//   launcher  — spawn() + waitpid()
-//   systest   — autoteste das syscalls 9..19 e das correções de segurança
-//   ls        — lista diretórios (SYS_READDIR/SYS_STAT)
 //   winpaint  — janela gráfica Ring 3 (SYS_WIN_*); só se o header existir
 typedef struct {
     const char*          name;
@@ -95,16 +112,10 @@ typedef struct {
 } BuiltinBin;
 
 static const BuiltinBin g_builtin_bins[] = {
-    { "hello.hexec",      hello_hexec_data,      HELLO_HEXEC_SIZE      },
-    { "hello_data.hexec", hello_data_hexec_data, HELLO_DATA_HEXEC_SIZE },
-    { "hello_full.hexec", hello_full_hexec_data, HELLO_FULL_HEXEC_SIZE },
-    { "calc.hexec",       calc_hexec_data,       CALC_HEXEC_SIZE       },
-    { "notes.hexec",      notes_hexec_data,      NOTES_HEXEC_SIZE      },
-    { "launcher.hexec",   launcher_hexec_data,   LAUNCHER_HEXEC_SIZE   },
-    { "systest.hexec",    systest_hexec_data,    SYSTEST_HEXEC_SIZE    },
-    { "ls.hexec",         ls_hexec_data,         LS_HEXEC_SIZE         },
+    { "hello.hexec",  hello_hexec_data,  HELLO_HEXEC_SIZE  },
+    { "calc.hexec",   calc_hexec_data,   CALC_HEXEC_SIZE   },
 #ifdef HAVE_WINPAINT_HEXEC
-    { "winpaint.hexec",   winpaint_hexec_data,   WINPAINT_HEXEC_SIZE   },
+    { "winpaint.hexec", winpaint_hexec_data, WINPAINT_HEXEC_SIZE },
 #endif
 };
 
@@ -148,24 +159,27 @@ static void vfs_create_defaults(void) {
     VfsNode* etc  = vfs_mkdir(g_root, "etc");
     VfsNode* tmp  = vfs_mkdir(g_root, "tmp");
 
-    (void)bin; (void)tmp;
+    (void)home;
+
+    // Todos os diretórios de sistema são de root. /tmp é gravável por
+    // todos (0777) com o bit "sticky" (01000): cada usuário só consegue
+    // remover os PRÓPRIOS arquivos lá. Cada usuário ganha o seu
+    // /home/<nome> quando a conta é criada (kernel/user.c).
+    vfs_set_owner(g_root, 0, 0, VFS_MODE_DIR_DEFAULT);
+    vfs_set_owner(bin,    0, 0, VFS_MODE_DIR_DEFAULT);
+    vfs_set_owner(etc,    0, 0, VFS_MODE_DIR_DEFAULT);
+    vfs_set_owner(tmp,    0, 0, 0777 | VFS_MODE_STICKY);
 
     // Executáveis embutidos no kernel (ver g_builtin_bins acima).
     vfs_install_builtin_bins(bin);
-
-    // /home/user
-    VfsNode* user = vfs_mkdir(home, "user");
 
     // /etc/haos.conf
     VfsNode* conf = vfs_touch(etc, "haos.conf");
     vfs_write(conf, "# HAOS configuracao\nversion=1.1\ntheme=dark\n");
 
-    // /home/user/README.txt
-    VfsNode* readme = vfs_touch(user, "README.txt");
-    vfs_write(readme, "Bem-vindo ao HAOS!\nUse 'help' para ver os comandos.\n");
-
-    // CWD inicial: /home/user
-    g_cwd = user;
+    // Sem usuário ainda: o CWD inicial é a raiz. O login define o CWD
+    // como a home do usuário que entrar.
+    g_cwd = g_root;
 }
 
 void vfs_init(void) {
@@ -188,8 +202,9 @@ void vfs_init(void) {
 
         g_persistent = true;
         if (changed) vfs_persist();
-        VfsNode* user = vfs_resolve(g_root, "/home/user");
-        if (user && user->type == VFS_DIR) g_cwd = user;
+        // O diretório de trabalho inicial é a raiz; quem define o cwd real é
+        // session_start() (kernel/user.c), que usa a home do usuário que entrou.
+        g_cwd = g_root;
         return;
     }
 

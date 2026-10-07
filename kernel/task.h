@@ -329,6 +329,16 @@ typedef struct task {
                                              // precisa desbloquear a task.
 
     struct task*    next;                   // fila circular do scheduler (round-robin)
+
+    // ---- Identidade (usuários, Fase 4) ----
+    // Dono do processo para checagem de permissões nas syscalls de
+    // arquivo (ver fs/perm.h). Processos de usuário herdam do usuário
+    // logado (terminal) ou do pai (SYS_SPAWN) e NUNCA rodam com uid 0.
+    // Ficam por ÚLTIMO na struct de propósito: não deslocam nenhum
+    // campo que o código assembly (task_switch.asm) possa ler.
+    // Kernel threads ficam com uid = gid = 0 (são o próprio kernel).
+    uint32_t        uid;
+    uint32_t        gid;
 } task_t;
 
 // ---- API pública ----
@@ -578,7 +588,7 @@ uint64_t task_stdin_read(task_t* t, uint8_t* out_buf, uint64_t max_len);
 // manifestar como "a saída do processo sumiu" três camadas de
 // abstração depois. Ver kernel/task.c e gui/apps/terminal.cpp para
 // os pontos de uso.
-#define TASK_T_EXPECTED_SIZE 832
+#define TASK_T_EXPECTED_SIZE 840
 
 #ifdef __cplusplus
   #define TASK_LAYOUT_GUARD(unique_name) \

@@ -11,6 +11,8 @@
 #include "editor.h"
 #include "../widgets_basic.h"
 #include "../../kernel/process.h"
+#include "../../kernel/user.h"
+#include "../../fs/perm.h"
 
 // Ver o comentário grande em TASK_LAYOUT_GUARD (kernel/task.h): trava
 // em tempo de compilação para garantir que este compilador C++
@@ -24,6 +26,12 @@ TASK_LAYOUT_GUARD(terminal_cpp);
 #define PAD 8
 #define TERM_CMD_HISTORY 20
 #define PROMPT_MAX 40
+
+// Etapas do prompt de senha (passwd / adduser) — ver term_password_line().
+#define PW_NONE    0
+#define PW_CURRENT 1   // senha atual (só ao trocar a PRÓPRIA senha, se tiver uma)
+#define PW_NEW     2
+#define PW_CONFIRM 3
 #define TERM_MAX_BG_PROCESSES 4  // quantos processos em background
                                    // ("run prog.hexec &") um mesmo
                                    // terminal pode acompanhar ao
@@ -46,6 +54,16 @@ struct TermState {
     char cmd_history[TERM_CMD_HISTORY][TERM_BUF_SIZE];
     int  cmd_hist_count;
     int  cmd_hist_pos;
+
+    // ---- Prompt de senha (passwd / adduser) ----
+    // Enquanto pw_stage != PW_NONE, o teclado edita uma linha MASCARADA
+    // (só asteriscos na tela), que não vai para o histórico de comandos.
+    int      pw_stage;
+    bool     pw_create;                        // true = adduser, false = passwd
+    bool     pw_admin;                         // adduser ... admin
+    uint32_t pw_target_uid;
+    char     pw_target_name[USER_NAME_MAX];
+    char     pw_first[PASSWORD_MAX + 1];       // 1ª digitação (até confirmar)
 
     // ---- Processo de usuário rodando "dentro" deste terminal ----
     // Só um processo "em foco" por terminal — cada terminal mostra
@@ -161,6 +179,16 @@ static void cmd_help(TermState* t) {
     term_println(t, tr(STR_TERM_HELP_RM));
     term_println(t, tr(STR_TERM_HELP_STAT));
     term_println(t, tr(STR_TERM_HELP_EDIT));
+    term_println(t, "");
+    term_println(t, tr(STR_TERM_HELP_USERS_HEADER));
+    term_println(t, tr(STR_TERM_HELP_WHOAMI));
+    term_println(t, tr(STR_TERM_HELP_ID));
+    term_println(t, tr(STR_TERM_HELP_USERS));
+    term_println(t, tr(STR_TERM_HELP_ADDUSER));
+    term_println(t, tr(STR_TERM_HELP_DELUSER));
+    term_println(t, tr(STR_TERM_HELP_PASSWD));
+    term_println(t, tr(STR_TERM_HELP_CHMOD));
+    term_println(t, tr(STR_TERM_HELP_CHOWN));
 }
 
 static void cmd_about(TermState* t) {
@@ -229,23 +257,62 @@ static void cmd_pwd(TermState* t) {
     term_println(t, buf);
 }
 
+// Acrescenta `s` a `line` e completa com espaços até `width` colunas.
+static void append_padded(char* line, size_t cap, const char* s, size_t width) {
+    kstrncat(line, s, cap);
+    size_t n = kstrlen(s);
+    while (n < width && kstrlen(line) + 1 < cap) { kstrncat(line, " ", cap); n++; }
+}
+
+// Nome do dono para exibição ("ana", "root"; ou o número se a conta sumiu).
+static void owner_name(uint32_t uid, char* out, size_t cap) {
+    const UserEntry* u = user_find_uid(uid);
+    if (u) { kstrncpy(out, u->name, cap - 1); out[cap - 1] = '\0'; }
+    else   { char num[16]; kuitoa(uid, num); kstrncpy(out, num, cap - 1); out[cap - 1] = '\0'; }
+}
+
+// ls [-l] [caminho] — com -l mostra permissões e dono (formato do Unix).
 static void cmd_ls(TermState* t, const char* path_arg) {
-    VfsNode* dir;
+    bool long_fmt = false;
+    while (path_arg && *path_arg == ' ') path_arg++;
+    if (path_arg && path_arg[0] == '-' && path_arg[1] == 'l' &&
+        (path_arg[2] == '\0' || path_arg[2] == ' ')) {
+        long_fmt = true;
+        path_arg += 2;
+        while (*path_arg == ' ') path_arg++;
+    }
+
+    Cred cred = session_cred();
+    VfsNode* dir = nullptr;
     if (path_arg && path_arg[0]) {
-        dir = vfs_resolve(vfs_cwd(), path_arg);
-        if (!dir) { term_println(t, tr(STR_TERM_LS_DIR_NOT_FOUND)); return; }
+        int rr = vfs_resolve_as(&cred, vfs_cwd(), path_arg, &dir);
+        if (rr == PERM_EACCES) { term_println(t, tr(STR_PERM_DENIED)); return; }
+        if (rr != PERM_OK || !dir) { term_println(t, tr(STR_TERM_LS_DIR_NOT_FOUND)); return; }
         if (dir->type != VFS_DIR) { term_println(t, tr(STR_TERM_LS_NOT_A_DIR)); return; }
     } else {
         dir = vfs_cwd();
     }
+    if (!perm_allows(dir, &cred, PERM_R)) { term_println(t, tr(STR_PERM_DENIED)); return; }
     if (dir->child_count == 0) { term_println(t, tr(STR_TERM_LS_EMPTY)); return; }
 
     for (uint32_t i = 0; i < dir->child_count; i++) {
         VfsNode* child = dir->children[i];
         char line[TERM_COLS + 1];
         kmemset(line, 0, sizeof(line));
-        if (child->type == VFS_DIR) kstrcpy(line, "  [DIR]  ");
-        else                        kstrcpy(line, "  [ARQ]  ");
+        if (long_fmt) {
+            char pm[11];
+            perm_format(child, pm);
+            char ow[USER_NAME_MAX];
+            owner_name(child->uid, ow, sizeof(ow));
+            kstrcpy(line, " ");
+            kstrncat(line, pm, sizeof(line));
+            kstrncat(line, " ", sizeof(line));
+            append_padded(line, sizeof(line), ow, 9);
+        } else if (child->type == VFS_DIR) {
+            kstrcpy(line, "  [DIR]  ");
+        } else {
+            kstrcpy(line, "  [ARQ]  ");
+        }
         // kstrncat (com limite) em vez de kstrcat: child->name tem
         // tamanho imprevisível e `line` é um buffer fixo de
         // TERM_COLS+1 — um nome de arquivo longo estouraria a pilha
@@ -264,28 +331,38 @@ static void cmd_ls(TermState* t, const char* path_arg) {
 }
 
 static void cmd_cd(TermState* t, const char* path_arg) {
+    Cred cred = session_cred();
     if (!path_arg || !path_arg[0]) {
-        VfsNode* home = vfs_resolve(vfs_root(), "/home/user");
-        if (!home) home = vfs_root();
+        // "cd" sem argumento: vai para a pasta pessoal do usuário logado.
+        VfsNode* home = nullptr;
+        if (vfs_resolve_as(&cred, vfs_root(), session_home(), &home) != PERM_OK || !home)
+            home = vfs_root();
         vfs_set_cwd(home);
         return;
     }
-    VfsNode* target = vfs_resolve(vfs_cwd(), path_arg);
-    if (!target) { term_println(t, tr(STR_TERM_CD_NOT_FOUND)); return; }
+    VfsNode* target = nullptr;
+    int rr = vfs_resolve_as(&cred, vfs_cwd(), path_arg, &target);
+    if (rr == PERM_EACCES) { term_println(t, tr(STR_PERM_DENIED)); return; }
+    if (rr != PERM_OK || !target) { term_println(t, tr(STR_TERM_CD_NOT_FOUND)); return; }
     if (target->type != VFS_DIR) { term_println(t, tr(STR_TERM_CD_NOT_A_DIR)); return; }
+    if (!perm_allows(target, &cred, PERM_X)) { term_println(t, tr(STR_PERM_DENIED)); return; }
     vfs_set_cwd(target);
 }
 
 static void cmd_mkdir(TermState* t, const char* name) {
     if (!name || !name[0]) { term_println(t, tr(STR_TERM_MKDIR_NEED_NAME)); return; }
-    VfsNode* n = vfs_mkdir(vfs_cwd(), name);
-    if (!n) term_println(t, tr(STR_TERM_MKDIR_FAILED));
+    Cred cred = session_cred();
+    int err = PERM_OK;
+    VfsNode* n = vfs_mkdir_as(&cred, vfs_cwd(), name, &err);
+    if (!n) term_println(t, err == PERM_EACCES ? tr(STR_PERM_DENIED) : tr(STR_TERM_MKDIR_FAILED));
 }
 
 static void cmd_touch(TermState* t, const char* name) {
     if (!name || !name[0]) { term_println(t, tr(STR_TERM_TOUCH_NEED_NAME)); return; }
-    VfsNode* n = vfs_touch(vfs_cwd(), name);
-    if (!n) term_println(t, tr(STR_TERM_TOUCH_FAILED));
+    Cred cred = session_cred();
+    int err = PERM_OK;
+    VfsNode* n = vfs_touch_as(&cred, vfs_cwd(), name, &err);
+    if (!n) term_println(t, err == PERM_EACCES ? tr(STR_PERM_DENIED) : tr(STR_TERM_TOUCH_FAILED));
 }
 
 // ---- run <arquivo.hexec> ----
@@ -534,9 +611,15 @@ static void cmd_run(TermState* t, const char* name) {
     while (*rest == ' ') rest++; // pula espaços entre o nome do
                                    // arquivo e o primeiro argumento
 
-    VfsNode* node = vfs_resolve(vfs_cwd(), filename);
-    if (!node) { term_println(t, "run: arquivo nao encontrado"); return; }
+    // O processo roda com a identidade do usuário logado (process_create) e
+    // precisa de permissão de LEITURA no arquivo, como qualquer acesso.
+    Cred rcred = session_cred();
+    VfsNode* node = nullptr;
+    int rr = vfs_resolve_as(&rcred, vfs_cwd(), filename, &node);
+    if (rr == PERM_EACCES) { term_println(t, tr(STR_PERM_DENIED)); return; }
+    if (rr != PERM_OK || !node) { term_println(t, "run: arquivo nao encontrado"); return; }
     if (node->type == VFS_DIR) { term_println(t, "run: e um diretorio"); return; }
+    if (!perm_allows(node, &rcred, PERM_R)) { term_println(t, tr(STR_PERM_DENIED)); return; }
 
     // Monta argv_str: argv[0] é sempre o nome do arquivo (convenção
     // Unix — o próprio programa recebe seu nome como primeiro
@@ -591,9 +674,13 @@ static void cmd_run(TermState* t, const char* name) {
 
 static void cmd_cat(TermState* t, const char* name) {
     if (!name || !name[0]) { term_println(t, tr(STR_TERM_CAT_NEED_NAME)); return; }
-    VfsNode* node = vfs_resolve(vfs_cwd(), name);
-    if (!node) { term_println(t, tr(STR_TERM_CAT_NOT_FOUND)); return; }
+    Cred cred = session_cred();
+    VfsNode* node = nullptr;
+    int rr = vfs_resolve_as(&cred, vfs_cwd(), name, &node);
+    if (rr == PERM_EACCES) { term_println(t, tr(STR_PERM_DENIED)); return; }
+    if (rr != PERM_OK || !node) { term_println(t, tr(STR_TERM_CAT_NOT_FOUND)); return; }
     if (node->type == VFS_DIR) { term_println(t, tr(STR_TERM_CAT_IS_DIR)); return; }
+    if (!perm_allows(node, &cred, PERM_R)) { term_println(t, tr(STR_PERM_DENIED)); return; }
     if (!node->data || node->size == 0) { term_println(t, tr(STR_TERM_CAT_EMPTY)); return; }
     const char* p = node->data;
     char line[TERM_COLS + 1];
@@ -626,9 +713,17 @@ static void cmd_write(TermState* t, const char* rest) {
 
     if (!fname[0]) { term_println(t, tr(STR_TERM_WRITE_EMPTY_NAME)); return; }
 
-    VfsNode* node = vfs_resolve(vfs_cwd(), fname);
-    if (!node) node = vfs_touch(vfs_cwd(), fname);
+    Cred cred = session_cred();
+    VfsNode* node = nullptr;
+    int rr = vfs_resolve_as(&cred, vfs_cwd(), fname, &node);
+    if (rr == PERM_EACCES) { term_println(t, tr(STR_PERM_DENIED)); return; }
+    if (rr != PERM_OK || !node) {
+        int err = PERM_OK;
+        node = vfs_touch_as(&cred, vfs_cwd(), fname, &err);
+        if (!node && err == PERM_EACCES) { term_println(t, tr(STR_PERM_DENIED)); return; }
+    }
     if (!node || node->type != VFS_FILE) { term_println(t, tr(STR_TERM_WRITE_NOT_A_FILE)); return; }
+    if (!perm_allows(node, &cred, PERM_W)) { term_println(t, tr(STR_PERM_DENIED)); return; }
 
     vfs_write(node, rest);
     vfs_append(node, "\n");
@@ -648,9 +743,17 @@ static void cmd_append(TermState* t, const char* rest) {
 
     while (*rest == ' ') rest++;
 
-    VfsNode* node = vfs_resolve(vfs_cwd(), fname);
-    if (!node) node = vfs_touch(vfs_cwd(), fname);
+    Cred cred = session_cred();
+    VfsNode* node = nullptr;
+    int rr = vfs_resolve_as(&cred, vfs_cwd(), fname, &node);
+    if (rr == PERM_EACCES) { term_println(t, tr(STR_PERM_DENIED)); return; }
+    if (rr != PERM_OK || !node) {
+        int err = PERM_OK;
+        node = vfs_touch_as(&cred, vfs_cwd(), fname, &err);
+        if (!node && err == PERM_EACCES) { term_println(t, tr(STR_PERM_DENIED)); return; }
+    }
     if (!node || node->type != VFS_FILE) { term_println(t, tr(STR_TERM_APPEND_NOT_A_FILE)); return; }
+    if (!perm_allows(node, &cred, PERM_W)) { term_println(t, tr(STR_PERM_DENIED)); return; }
 
     vfs_append(node, rest);
     vfs_append(node, "\n");
@@ -659,18 +762,28 @@ static void cmd_append(TermState* t, const char* rest) {
 
 static void cmd_rm(TermState* t, const char* name) {
     if (!name || !name[0]) { term_println(t, tr(STR_TERM_RM_NEED_NAME)); return; }
-    VfsNode* node = vfs_resolve(vfs_cwd(), name);
-    if (!node) { term_println(t, tr(STR_TERM_RM_NOT_FOUND)); return; }
+    Cred cred = session_cred();
+    VfsNode* node = nullptr;
+    int rr = vfs_resolve_as(&cred, vfs_cwd(), name, &node);
+    if (rr == PERM_EACCES) { term_println(t, tr(STR_PERM_DENIED)); return; }
+    if (rr != PERM_OK || !node) { term_println(t, tr(STR_TERM_RM_NOT_FOUND)); return; }
     if (node == vfs_root()) { term_println(t, tr(STR_TERM_RM_CANT_ROOT)); return; }
     if (node == vfs_cwd()) { term_println(t, tr(STR_TERM_RM_CANT_CWD)); return; }
-    vfs_rm(node);
-    term_println(t, tr(STR_TERM_RM_DONE));
+    // vfs_remove_as: W+X no diretório pai, regra sticky (/tmp) e, em
+    // diretório, permissão para remover CADA item de dentro dele.
+    int r = vfs_remove_as(&cred, node);
+    if (r == PERM_EACCES)  term_println(t, tr(STR_PERM_DENIED));
+    else if (r == PERM_OK) term_println(t, tr(STR_TERM_RM_DONE));
+    else                   term_println(t, tr(STR_TERM_RM_NOT_FOUND));
 }
 
 static void cmd_stat(TermState* t, const char* name) {
     if (!name || !name[0]) { term_println(t, tr(STR_TERM_STAT_NEED_NAME)); return; }
-    VfsNode* node = vfs_resolve(vfs_cwd(), name);
-    if (!node) { term_println(t, tr(STR_TERM_STAT_NOT_FOUND)); return; }
+    Cred cred = session_cred();
+    VfsNode* node = nullptr;
+    int rr = vfs_resolve_as(&cred, vfs_cwd(), name, &node);
+    if (rr == PERM_EACCES) { term_println(t, tr(STR_PERM_DENIED)); return; }
+    if (rr != PERM_OK || !node) { term_println(t, tr(STR_TERM_STAT_NOT_FOUND)); return; }
     char buf[TERM_COLS + 1];
     // kstrncat em todos os pontos abaixo (não kstrcat): nome de
     // arquivo e, principalmente, o caminho absoluto (path[512]) têm
@@ -692,10 +805,299 @@ static void cmd_stat(TermState* t, const char* name) {
         kstrcpy(buf, tr(STR_TERM_STAT_ITEMS)); kstrncat(buf, cnt, sizeof(buf));
         term_println(t, buf);
     }
+    {
+        char pm[11]; perm_format(node, pm);
+        char ow[USER_NAME_MAX]; owner_name(node->uid, ow, sizeof(ow));
+        char oct[8]; // modo em octal (ex.: 0644)
+        oct[0] = '0';
+        oct[1] = (char)('0' + ((node->mode >> 9) & 7));
+        oct[2] = (char)('0' + ((node->mode >> 6) & 7));
+        oct[3] = (char)('0' + ((node->mode >> 3) & 7));
+        oct[4] = (char)('0' + (node->mode & 7));
+        oct[5] = '\0';
+        kstrcpy(buf, tr(STR_TERM_STAT_OWNER)); kstrncat(buf, ow, sizeof(buf));
+        term_println(t, buf);
+        kstrcpy(buf, tr(STR_TERM_STAT_MODE)); kstrncat(buf, pm, sizeof(buf));
+        kstrncat(buf, " (", sizeof(buf)); kstrncat(buf, oct, sizeof(buf)); kstrncat(buf, ")", sizeof(buf));
+        term_println(t, buf);
+    }
     char path[512];
     vfs_path_of(node, path, sizeof(path));
     kstrcpy(buf, tr(STR_TERM_STAT_PATH)); kstrncat(buf, path, sizeof(buf));
     term_println(t, buf);
+}
+
+// ============================================================
+//  Usuários e permissões: whoami, id, users, adduser, deluser, passwd,
+//  chmod, chown. Estes comandos agem em nome do usuário LOGADO
+//  (session_*): administradores ignoram permissões de arquivo, mas os
+//  programas que eles iniciam continuam sem privilégio (ver user.h).
+// ============================================================
+
+static const char* user_error_text(int r) {
+    switch (r) {
+        case USER_ERR_NOUSER:  return tr(STR_TERM_USER_NOT_FOUND);
+        case USER_ERR_EXISTS:  return tr(STR_TERM_USER_EXISTS);
+        case USER_ERR_INVALID: return tr(STR_TERM_USER_INVALID);
+        case USER_ERR_LIMIT:   return tr(STR_TERM_USER_LIMIT);
+        case USER_ERR_DENIED:  return tr(STR_TERM_USER_DENIED);
+        case USER_ERR_IO:      return tr(STR_TERM_USER_IO);
+        default:               return tr(STR_TERM_USER_IO);
+    }
+}
+
+// Copia o primeiro token de `*args` (separado por espaço) para `out` e
+// avança `*args` para depois dele. Retorna false se o token não coube em
+// `cap` bytes (nome longo demais) — nesse caso `out` fica inválido.
+static bool take_token(const char** args, char* out, size_t cap) {
+    const char* p = *args;
+    while (*p == ' ') p++;
+    size_t i = 0;
+    while (*p && *p != ' ') {
+        if (i + 1 >= cap) { *args = p; out[0] = '\0'; return false; }
+        out[i++] = *p++;
+    }
+    out[i] = '\0';
+    while (*p == ' ') p++;
+    *args = p;
+    return true;
+}
+
+static void cmd_whoami(TermState* t) {
+    term_println(t, session_username());
+}
+
+static void cmd_id(TermState* t) {
+    char line[TERM_COLS + 1];
+    char num[16];
+    kmemset(line, 0, sizeof(line));
+    kstrcpy(line, "uid=");
+    kuitoa(session_uid(), num);  kstrncat(line, num, sizeof(line));
+    kstrncat(line, "(", sizeof(line));
+    kstrncat(line, session_username(), sizeof(line));
+    kstrncat(line, ") gid=", sizeof(line));
+    kuitoa(session_gid(), num);  kstrncat(line, num, sizeof(line));
+    if (session_is_admin()) kstrncat(line, tr(STR_TERM_ID_ADMIN), sizeof(line));
+    term_println(t, line);
+    term_println(t, tr(STR_TERM_ID_PROCS));
+}
+
+static void cmd_users(TermState* t) {
+    term_println(t, tr(STR_TERM_USERS_HEADER));
+    for (uint32_t i = 0; i < user_total(); i++) {
+        const UserEntry* u = user_at(i);
+        if (!u) continue;
+        char line[TERM_COLS + 1];
+        char num[16];
+        kmemset(line, 0, sizeof(line));
+        kuitoa(u->uid, num);
+        append_padded(line, sizeof(line), num, 7);
+        kstrncat(line, u->name, sizeof(line));
+        if (user_is_admin(u)) kstrncat(line, tr(STR_TERM_ID_ADMIN), sizeof(line));
+        term_println(t, line);
+    }
+}
+
+static bool user_name_taken(const char* name) {
+    for (uint32_t i = 0; i < user_total(); i++) {
+        const UserEntry* u = user_at(i);
+        if (!u) continue;
+        const char* a = u->name;
+        const char* b = name;
+        while (*a && *b) {
+            char ca = (*a >= 'A' && *a <= 'Z') ? (char)(*a + 32) : *a;
+            char cb = (*b >= 'A' && *b <= 'Z') ? (char)(*b + 32) : *b;
+            if (ca != cb) break;
+            a++; b++;
+        }
+        if (!*a && !*b) return true;
+    }
+    return false;
+}
+
+static void pw_reset(TermState* t) {
+    kmemset(t->pw_first, 0, sizeof(t->pw_first));
+    t->pw_stage = PW_NONE;
+    t->pw_create = false;
+    t->pw_admin = false;
+    t->pw_target_uid = 0;
+    t->pw_target_name[0] = '\0';
+}
+
+static const char* pw_prompt_text(const TermState* t) {
+    switch (t->pw_stage) {
+        case PW_CURRENT: return tr(STR_TERM_PW_CURRENT);
+        case PW_NEW:     return tr(STR_TERM_PW_NEW);
+        case PW_CONFIRM: return tr(STR_TERM_PW_CONFIRM);
+        default:         return "";
+    }
+}
+
+static void cmd_adduser(TermState* t, const char* args) {
+    if (!session_is_admin()) { term_println(t, tr(STR_TERM_NEED_ADMIN)); return; }
+
+    char name[USER_NAME_MAX];
+    if (!take_token(&args, name, sizeof(name))) { term_println(t, tr(STR_TERM_USER_INVALID)); return; }
+    if (!name[0]) { term_println(t, tr(STR_TERM_USAGE_ADDUSER)); return; }
+
+    bool admin = false;
+    if (*args) {
+        if (kstrcmp(args, "admin") == 0) admin = true;
+        else { term_println(t, tr(STR_TERM_USAGE_ADDUSER)); return; }
+    }
+
+    if (!user_name_valid(name)) { term_println(t, tr(STR_TERM_USER_INVALID)); return; }
+    if (user_name_taken(name))  { term_println(t, tr(STR_TERM_USER_EXISTS)); return; }
+    if (user_total() >= USER_MAX) { term_println(t, tr(STR_TERM_USER_LIMIT)); return; }
+
+    pw_reset(t);
+    t->pw_create = true;
+    t->pw_admin  = admin;
+    kstrncpy(t->pw_target_name, name, sizeof(t->pw_target_name) - 1);
+    t->pw_stage = PW_NEW;
+}
+
+static void cmd_deluser(TermState* t, const char* args) {
+    if (!session_is_admin()) { term_println(t, tr(STR_TERM_NEED_ADMIN)); return; }
+    char name[USER_NAME_MAX];
+    if (!take_token(&args, name, sizeof(name)) || !name[0]) {
+        term_println(t, tr(STR_TERM_USAGE_DELUSER));
+        return;
+    }
+    const UserEntry* u = user_find(name);
+    if (!u) { term_println(t, tr(STR_TERM_USER_NOT_FOUND)); return; }
+    int r = user_delete(u->uid);
+    term_println(t, r == USER_OK ? tr(STR_TERM_USER_DELETED) : user_error_text(r));
+}
+
+static void cmd_passwd(TermState* t, const char* args) {
+    char name[USER_NAME_MAX];
+    if (!take_token(&args, name, sizeof(name))) { term_println(t, tr(STR_TERM_USER_INVALID)); return; }
+
+    const UserEntry* u = name[0] ? user_find(name) : user_find_uid(session_uid());
+    if (!u) { term_println(t, tr(STR_TERM_USER_NOT_FOUND)); return; }
+    if (u->uid == UID_ROOT) { term_println(t, tr(STR_TERM_USER_DENIED)); return; }
+
+    bool self = (u->uid == session_uid());
+    if (!self && !session_is_admin()) { term_println(t, tr(STR_TERM_NEED_ADMIN)); return; }
+
+    pw_reset(t);
+    t->pw_target_uid = u->uid;
+    kstrncpy(t->pw_target_name, u->name, sizeof(t->pw_target_name) - 1);
+    // Trocar a PRÓPRIA senha pede a senha atual (se houver); um administrador
+    // redefinindo a de OUTRA conta não precisa saber a antiga.
+    t->pw_stage = (self && user_has_password(u)) ? PW_CURRENT : PW_NEW;
+}
+
+// Conclui adduser/passwd depois da confirmação.
+static void pw_apply(TermState* t, const char* password) {
+    int r;
+    if (t->pw_create) {
+        r = user_create(t->pw_target_name, password, t->pw_admin ? 1u : 0u);
+        if (r == USER_OK) {
+            const UserEntry* u = user_find(t->pw_target_name);
+            char msg[TERM_COLS + 1];
+            kstrncpy(msg, tr(STR_TERM_USER_CREATED), sizeof(msg) - 1);
+            msg[sizeof(msg) - 1] = '\0';
+            if (u) kstrncat(msg, u->home, sizeof(msg));
+            term_println(t, msg);
+        }
+    } else {
+        r = user_set_password(t->pw_target_uid, password);
+        if (r == USER_OK) term_println(t, tr(STR_TERM_PW_CHANGED));
+    }
+    if (r != USER_OK) term_println(t, user_error_text(r));
+}
+
+// Chamada quando o usuário aperta Enter durante um prompt de senha.
+// A linha digitada (t->input) NUNCA entra no histórico nem é mostrada.
+static void term_password_line(TermState* t) {
+    char buf[PASSWORD_MAX + 1];
+    kstrncpy(buf, t->input, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+
+    term_println(t, pw_prompt_text(t));   // eco do prompt, sem a senha
+
+    switch (t->pw_stage) {
+        case PW_CURRENT:
+            if (user_verify(t->pw_target_name, buf, nullptr) != USER_OK) {
+                term_println(t, tr(STR_TERM_PW_WRONG));
+                pw_reset(t);
+            } else {
+                t->pw_stage = PW_NEW;
+            }
+            break;
+        case PW_NEW:
+            kstrncpy(t->pw_first, buf, sizeof(t->pw_first) - 1);
+            t->pw_first[sizeof(t->pw_first) - 1] = '\0';
+            t->pw_stage = PW_CONFIRM;
+            break;
+        case PW_CONFIRM:
+            if (kstrcmp(buf, t->pw_first) != 0) {
+                term_println(t, tr(STR_TERM_PW_MISMATCH));
+            } else {
+                pw_apply(t, t->pw_first);
+            }
+            pw_reset(t);
+            break;
+        default:
+            pw_reset(t);
+            break;
+    }
+    kmemset(buf, 0, sizeof(buf));
+}
+
+// "644" / "0644" / "1777" -> 0644 ... (3 ou 4 dígitos octais)
+static bool parse_octal_mode(const char* s, uint16_t* out) {
+    size_t n = kstrlen(s);
+    if (n < 3 || n > 4) return false;
+    uint32_t v = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (s[i] < '0' || s[i] > '7') return false;
+        v = v * 8 + (uint32_t)(s[i] - '0');
+    }
+    if (v > VFS_MODE_MASK) return false;
+    *out = (uint16_t)v;
+    return true;
+}
+
+static void cmd_chmod(TermState* t, const char* args) {
+    char mode_s[8];
+    if (!take_token(&args, mode_s, sizeof(mode_s)) || !mode_s[0] || !*args) {
+        term_println(t, tr(STR_TERM_USAGE_CHMOD));
+        return;
+    }
+    uint16_t mode;
+    if (!parse_octal_mode(mode_s, &mode)) { term_println(t, tr(STR_TERM_MODE_INVALID)); return; }
+
+    Cred cred = session_cred();
+    VfsNode* node = nullptr;
+    int rr = vfs_resolve_as(&cred, vfs_cwd(), args, &node);
+    if (rr == PERM_EACCES) { term_println(t, tr(STR_PERM_DENIED)); return; }
+    if (rr != PERM_OK || !node) { term_println(t, tr(STR_TERM_STAT_NOT_FOUND)); return; }
+
+    int r = vfs_chmod_as(&cred, node, mode);   // só o dono (ou administrador)
+    term_println(t, r == PERM_OK ? tr(STR_TERM_DONE) : tr(STR_PERM_DENIED));
+}
+
+static void cmd_chown(TermState* t, const char* args) {
+    if (!session_is_admin()) { term_println(t, tr(STR_TERM_NEED_ADMIN)); return; }
+    char uname[USER_NAME_MAX];
+    if (!take_token(&args, uname, sizeof(uname)) || !uname[0] || !*args) {
+        term_println(t, tr(STR_TERM_USAGE_CHOWN));
+        return;
+    }
+    const UserEntry* u = user_find(uname);
+    if (!u) { term_println(t, tr(STR_TERM_USER_NOT_FOUND)); return; }
+
+    Cred cred = session_cred();
+    VfsNode* node = nullptr;
+    int rr = vfs_resolve_as(&cred, vfs_cwd(), args, &node);
+    if (rr == PERM_EACCES) { term_println(t, tr(STR_PERM_DENIED)); return; }
+    if (rr != PERM_OK || !node) { term_println(t, tr(STR_TERM_STAT_NOT_FOUND)); return; }
+
+    int r = vfs_chown_as(&cred, node, u->uid, u->gid);
+    term_println(t, r == PERM_OK ? tr(STR_TERM_DONE) : tr(STR_PERM_DENIED));
 }
 
 static void term_build_prompt(char* buf, size_t bufsz) {
@@ -769,6 +1171,22 @@ static void term_execute(TermState* t, const char* input) {
         cmd_lang(t, args);
     } else if (kstrcmp(cmd, "edit") == 0) {
         cmd_edit(args);
+    } else if (kstrcmp(cmd, "whoami") == 0) {
+        cmd_whoami(t);
+    } else if (kstrcmp(cmd, "id") == 0) {
+        cmd_id(t);
+    } else if (kstrcmp(cmd, "users") == 0) {
+        cmd_users(t);
+    } else if (kstrcmp(cmd, "adduser") == 0) {
+        cmd_adduser(t, args);
+    } else if (kstrcmp(cmd, "deluser") == 0) {
+        cmd_deluser(t, args);
+    } else if (kstrcmp(cmd, "passwd") == 0) {
+        cmd_passwd(t, args);
+    } else if (kstrcmp(cmd, "chmod") == 0) {
+        cmd_chmod(t, args);
+    } else if (kstrcmp(cmd, "chown") == 0) {
+        cmd_chown(t, args);
     } else {
         char buf[TERM_COLS + 1];
         kstrcpy(buf, tr(STR_TERM_CMD_NOT_FOUND));
@@ -928,14 +1346,26 @@ public:
         }
 
         char prompt[PROMPT_MAX + 1];
-        term_build_prompt(prompt, sizeof(prompt));
+        char masked[PASSWORD_MAX + 2];
+        const char* shown = t->input;
+        if (t->pw_stage != PW_NONE) {
+            // Prompt de senha: texto do prompt + um '*' por caractere digitado.
+            kstrncpy(prompt, pw_prompt_text(t), PROMPT_MAX);
+            prompt[PROMPT_MAX] = '\0';
+            int n = t->input_len < PASSWORD_MAX ? t->input_len : PASSWORD_MAX;
+            for (int i = 0; i < n; i++) masked[i] = '*';
+            masked[n] = '\0';
+            shown = masked;
+        } else {
+            term_build_prompt(prompt, sizeof(prompt));
+        }
         int prompt_len = (int)kstrlen(prompt);
 
         fb_draw_string((uint32_t)bx, (uint32_t)input_y,
                        prompt, COLOR_TERM_PROMPT, 0, true);
         if (t->input_len > 0)
             fb_draw_string((uint32_t)(bx + FONT_W * prompt_len), (uint32_t)input_y,
-                           t->input, COLOR_TEXT_LIGHT, 0, true);
+                           shown, COLOR_TEXT_LIGHT, 0, true);
 
         int cx = bx + FONT_W * (prompt_len + t->input_len);
         uint32_t cur_color = t->cursor_visible ? COLOR_TERM_PROMPT : COLOR_TERM_BG;
@@ -1071,6 +1501,30 @@ public:
                 task_stdin_write(proc, &byte, 1);
                 if (t->running_line_len < TERM_COLS) {
                     t->running_line_buf[t->running_line_len++] = (char)c;
+                }
+            }
+            return EventResult::Handled;
+        }
+
+        // ---- Prompt de senha (passwd / adduser) ----
+        // Tudo que for digitado vai para t->input, mas só aparece como '*'
+        // (ver desenho acima) e nunca entra no histórico de comandos.
+        if (t->pw_stage != PW_NONE) {
+            if (c == '\n' || c == '\r') {
+                term_password_line(t);
+                kmemset(t->input, 0, TERM_BUF_SIZE);
+                t->input_len = 0;
+            } else if (c == '\b' || c == 0x08) {
+                if (t->input_len > 0) t->input[--t->input_len] = 0;
+            } else if (c == 27) {                       // ESC cancela
+                term_println(t, tr(STR_CANCEL));
+                pw_reset(t);
+                kmemset(t->input, 0, TERM_BUF_SIZE);
+                t->input_len = 0;
+            } else if (c >= 0x20 && c < 0x7F) {
+                if (t->input_len < PASSWORD_MAX) {
+                    t->input[t->input_len++] = (char)c;
+                    t->input[t->input_len] = 0;
                 }
             }
             return EventResult::Handled;

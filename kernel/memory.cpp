@@ -377,8 +377,13 @@ int kstrcmp(const char* a, const char* b) {
 }
 
 int kstrncmp(const char* a, const char* b, size_t n) {
-    while (n-- && *a && *a == *b) { a++; b++; }
-    if (!n) return 0;
+    // Compara no máximo `n` caracteres. A versão anterior usava `n--` na
+    // condição do laço: ao terminar de comparar `n` caracteres IGUAIS, n
+    // dava a volta (0 - 1) e a função seguia comparando o resto das
+    // strings — então um teste de prefixo (kstrncmp(s, "haos:", 5) == 0)
+    // só dava 0 quando `s` terminava logo depois do prefixo.
+    while (n && *a && *a == *b) { a++; b++; n--; }
+    if (n == 0) return 0;
     return (unsigned char)*a - (unsigned char)*b;
 }
 

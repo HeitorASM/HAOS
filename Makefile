@@ -71,6 +71,8 @@ C_SRCS   = kernel/kernel.c        \
            kernel/process.c       \
            kernel/keyboard.c      \
            kernel/lang.c          \
+           kernel/sha256.c        \
+           kernel/user.c          \
            drivers/fb.c           \
            drivers/utf8cp437.c    \
            drivers/font.c         \
@@ -82,6 +84,7 @@ C_SRCS   = kernel/kernel.c        \
            gui/wallpaper.c        \
            gui/apps/file_manager_fs.c \
            fs/vfs.c              \
+           fs/perm.c             \
            fs/haosfs.c
 
 # ── Fontes C++ ────────────────────────────────────────────────────────────

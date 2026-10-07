@@ -16,3 +16,12 @@ unsigned long uptime_ms(void) {
 int sleep_ms(unsigned long ms) {
     return (int)haos_syscall(SYS_SLEEP_MS, (long)ms, 0, 0, 0, 0);
 }
+
+// Identidade do processo (usuários). Nunca é 0 para programas de usuário.
+int getuid(void) {
+    return (int)haos_syscall(SYS_GETUID, 0, 0, 0, 0, 0);
+}
+
+int getgid(void) {
+    return (int)haos_syscall(SYS_GETGID, 0, 0, 0, 0, 0);
+}

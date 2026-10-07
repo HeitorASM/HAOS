@@ -338,6 +338,8 @@ task_t* task_create(const char* name, task_entry_fn entry_point, void* arg) {
     t->has_exited        = false;
     t->exit_code         = 0;
 
+    t->uid = 0;   // kernel thread: é o próprio kernel (ver task.h, campo uid)
+    t->gid = 0;
     task_publish_ready(t, name);
     return t;
 }

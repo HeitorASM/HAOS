@@ -52,6 +52,9 @@ extern "C" {
 #define SYS_WIN_BLIT    24
 #define SYS_WIN_EVENT   25
 #define SYS_WIN_INFO    26
+#define SYS_GETUID      27
+#define SYS_GETGID      28
+#define SYS_CHMOD       29
 
 // Flags de open2() — espelham os O_* de kernel/syscall.h.
 #ifndef O_RDONLY
