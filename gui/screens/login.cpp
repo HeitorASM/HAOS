@@ -433,11 +433,29 @@ void run_login_screen(void) {
                 run_stage_loop(sw, sh);
 
                 bool locked = false;
-                account = find_login_user(s_card->name_field_text(), &locked);
+                char typed[USER_NAME_MAX];
+                kstrncpy(typed, s_card->name_field_text(), sizeof(typed) - 1);
+                typed[sizeof(typed) - 1] = '\0';
+                account = find_login_user(typed, &locked);
                 delete s_card;
                 s_card = nullptr;
+                if (!account && locked) {
+                    error = tr(STR_LOGIN_ACCOUNT_LOCKED);
+                    continue;
+                }
                 if (!account) {
-                    error = locked ? tr(STR_LOGIN_ACCOUNT_LOCKED) : tr(STR_LOGIN_UNKNOWN_USER);
+                    // Nome inexistente: finge que existe — pede a senha, gasta
+                    // o mesmo tempo e dá a MESMA mensagem de senha errada, para
+                    // não revelar quais contas existem.
+                    reset_flags();
+                    s_card = new LoginCard(cx, cy, CARD_W, CARD_H, LoginStage::ENTER_PW, typed);
+                    s_card->show_stage(LoginStage::ENTER_PW, CARD_W, "");
+                    run_stage_loop(sw, sh);
+                    user_verify(typed, s_card->password_field_text(), nullptr);  // inexistente: só gasta o tempo
+                    delete s_card;
+                    s_card = nullptr;
+                    wrong_password_penalty();
+                    error = tr(STR_LOGIN_BAD_PASSWORD);
                     continue;
                 }
                 error = "";
@@ -455,8 +473,12 @@ void run_login_screen(void) {
                 s_card = nullptr;
 
                 if (r == USER_OK && verified) { account = verified; break; }
-                wrong_password_penalty();
-                error = tr(STR_LOGIN_BAD_PASSWORD);
+                if (r == USER_ERR_THROTTLED) {
+                    error = tr(STR_LOGIN_THROTTLED);
+                } else {
+                    wrong_password_penalty();
+                    error = tr(STR_LOGIN_BAD_PASSWORD);
+                }
                 // Com várias contas volta a pedir o nome; com uma só, só a senha.
                 if (user_regular_count() > 1) account = nullptr;
                 continue;

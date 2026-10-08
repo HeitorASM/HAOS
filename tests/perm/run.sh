@@ -7,5 +7,5 @@ gcc -O1 -g -Wall -Wextra -std=c11 -Wno-unused-parameter -Wno-unused-function \
     -Ikernel -Ifs -Idrivers \
     -o /tmp/haos_perm_test \
     tests/perm/test_perm.c tests/perm/stubs.c \
-    fs/vfs.c fs/perm.c kernel/user.c kernel/sha256.c
+    fs/vfs.c fs/perm.c kernel/user.c kernel/sha256.c kernel/random.c
 /tmp/haos_perm_test

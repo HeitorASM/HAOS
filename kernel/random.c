@@ -117,8 +117,8 @@ void rng_add_entropy(const void* data, size_t len, uint32_t bits) {
 }
 
 void rng_add_event(uint32_t tag) {
-    // Chamado de IRQ: sem init pesado aqui — só mistura se já inicializado.
-    if (!g_init) return;
+    // Barato e sem init: mix() encadeia no estado atual; a init depois só
+    // soma mais fontes por cima.
     uint64_t rec[2] = { rd_tsc(), tag };
     mix(rec, sizeof(rec));
     if (g_entropy_bits < 4096) g_entropy_bits++;

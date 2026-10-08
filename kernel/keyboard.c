@@ -1,5 +1,6 @@
 #include "keyboard.h"
 #include "types.h"
+#include "random.h"
 
 // Scancode tables (normal e shift)
 static const uint8_t sc_normal[128] = {
@@ -64,6 +65,7 @@ static void kb_push_char(uint8_t c) {
 }
 
 static void process_scancode(uint8_t sc) {
+    rng_add_event(sc);   // tempo entre teclas alimenta o pool de entropia
     // Prefixo de scancode estendido
     if (sc == 0xE0) {
         extended_mode = true;

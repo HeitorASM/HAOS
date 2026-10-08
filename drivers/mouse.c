@@ -1,6 +1,7 @@
 // drivers/mouse.c — driver PS/2 para mouse (IRQ12)
 #include "mouse.h"
 #include "../kernel/types.h"
+#include "../kernel/random.h"
 
 // ---- Variáveis do ring-buffer preenchido pela ISR (idt_asm.asm) ----
 extern volatile uint8_t mouse_buf[32];  // ring buffer de bytes crus
@@ -68,6 +69,7 @@ static void mouse_process_byte(uint8_t b) {
         case 3:
             pkt[3] = b;
             pkt_phase = 0;
+            rng_add_event((uint32_t)pkt[1] | ((uint32_t)pkt[2] << 8));
 
             // Extrai botões
             btn_now = pkt[0] & 0x07;

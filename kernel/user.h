@@ -57,6 +57,9 @@ typedef struct {
     char     home[USER_HOME_MAX];
     char     salt_hex[33];         // "" = sem senha; "fnv" = hash legado (migração)
     char     hash_hex[65];
+    // Estado de tentativas (só em memória; não vai para /etc/passwd).
+    uint32_t fail_count;           // falhas seguidas de senha
+    uint64_t locked_until;         // timer_ticks até quando as tentativas ficam bloqueadas
 } UserEntry;
 
 enum {
@@ -68,7 +71,8 @@ enum {
     USER_ERR_INVALID = -5,   // nome ou senha inválidos
     USER_ERR_LIMIT   = -6,   // USER_MAX contas
     USER_ERR_IO      = -7,
-    USER_ERR_DENIED  = -8    // ex.: remover a si mesmo / o último administrador
+    USER_ERR_DENIED  = -8,
+    USER_ERR_THROTTLED = -9  // muitas tentativas: aguarde (nem a senha é conferida)    // ex.: remover a si mesmo / o último administrador
 };
 
 // Carrega /etc/passwd (migrando o formato antigo, se preciso) e garante

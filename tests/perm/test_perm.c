@@ -12,6 +12,8 @@
 #include "../../kernel/user.h"
 #include "../../kernel/sha256.h"
 
+extern volatile uint64_t timer_ticks;   // definido em stubs.c
+
 extern int g_save_count;
 
 static int fails = 0, checks = 0;
@@ -78,7 +80,7 @@ static void test_fresh_install(void) {
     CHECK(user_verify("bob", "", NULL) == USER_OK);             // sem senha
     CHECK(user_verify("bob", "algo", NULL) == USER_ERR_BADPW);  // sem senha: só vazia
     CHECK(user_verify("root", "", NULL) == USER_ERR_LOCKED);    // ninguém entra como root
-    CHECK(user_verify("fantasma", "", NULL) == USER_ERR_NOUSER);
+    CHECK(user_verify("fantasma", "", NULL) == USER_ERR_BADPW);    // igual a senha errada: não revela se existe
 
     // salts diferentes => mesma senha, hashes diferentes
     CHECK(user_set_password(1001, "igual") == USER_OK);
@@ -353,6 +355,29 @@ static void test_session(void) {
     CHECK(cred_for_ids(0, 0).bypass == 1 && cred_for_ids(1000, 1000).bypass == 0);
 }
 
+static void test_login_hardening(void) {
+    printf("[9] login: maiúsculas, enumeração, bloqueio\n");
+    fresh();
+    user_create("ana", "pw", 1);
+    const UserEntry* out = NULL;
+
+    CHECK(user_find("ANA") == user_find("ana") && user_find("ana"));
+    CHECK(user_create("ANA", "x", 0) == USER_ERR_EXISTS);
+    CHECK(user_verify("ANA", "pw", &out) == USER_OK && out == user_find("ana"));
+    CHECK(user_verify("nao_existe", "pw", NULL) == user_verify("ana", "errada", NULL));
+
+    // 5 falhas seguidas -> 6ª tentativa é barrada mesmo com a senha CERTA
+    // (a comparação acima já gastou a 1ª falha; estas são a 2ª, 3ª, 4ª e 5ª)
+    for (int i = 0; i < 4; i++) CHECK(user_verify("ana", "errada", NULL) == USER_ERR_BADPW);
+    CHECK(user_verify("ana", "pw", NULL) == USER_ERR_THROTTLED);
+    timer_ticks += 29 * 100;
+    CHECK(user_verify("ana", "pw", NULL) == USER_ERR_THROTTLED);   // ainda dentro dos 30 s
+    timer_ticks += 2 * 100;
+    CHECK(user_verify("ana", "pw", NULL) == USER_OK);               // passou: entra e zera
+    CHECK(user_verify("ana", "errada", NULL) == USER_ERR_BADPW);    // contador recomeçou
+    CHECK(user_verify("ana", "pw", NULL) == USER_OK);
+}
+
 int main(void) {
     test_fresh_install();
     test_delete_rules();
@@ -362,6 +387,7 @@ int main(void) {
     test_migration();
     test_passwd_parsing();
     test_session();
+    test_login_hardening();
     printf("\n%d verificacoes, %d falha(s)\n", checks, fails);
     return fails ? 1 : 0;
 }

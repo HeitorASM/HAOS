@@ -284,6 +284,7 @@ static void load_passwd(const VfsNode* f) {
         if (line[0] == '\0' || line[0] == '#') continue;
 
         UserEntry e;
+        kmemset(&e, 0, sizeof(e));
         if (!parse_line(line, &e)) continue;              // linha corrompida: ignora
         if (g_user_count >= USER_MAX) break;
         if (user_find(e.name) || user_find_uid(e.uid)) continue;
@@ -361,9 +362,7 @@ uint32_t user_regular_count(void) {
 
 const UserEntry* user_find(const char* name) {
     if (!name) return NULL;
-    for (uint32_t i = 0; i < g_user_count; i++)
-        if (kstrcmp(g_users[i].name, name) == 0) return &g_users[i];
-    return NULL;
+    return find_nocase(name);     // mesma regra de user_create: Ana == ana
 }
 
 const UserEntry* user_find_uid(uint32_t uid) {
@@ -502,20 +501,52 @@ void user_init(void) {
 
 // ---- Autenticação ---------------------------------------------------------
 
+// Política de tentativas: até LOGIN_FREE_TRIES falhas seguidas sem espera;
+// a partir daí a conta fica bloqueada por 30 s, 60 s, 120 s... (máx. 15 min).
+// Só em memória: reiniciar zera — o custo do PBKDF2 e o teclado físico
+// continuam sendo a barreira principal.
+#define LOGIN_FREE_TRIES   5u
+#define LOGIN_LOCK_BASE_S  30u
+#define LOGIN_LOCK_MAX_S   900u
+
+static void register_failure(UserEntry* u) {
+    u->fail_count++;
+    if (u->fail_count >= LOGIN_FREE_TRIES) {
+        uint32_t shift = u->fail_count - LOGIN_FREE_TRIES;
+        if (shift > 5) shift = 5;
+        uint32_t secs = LOGIN_LOCK_BASE_S << shift;
+        if (secs > LOGIN_LOCK_MAX_S) secs = LOGIN_LOCK_MAX_S;
+        u->locked_until = timer_ticks + (uint64_t)secs * 100u;   // 100 Hz
+    }
+}
+
 int user_verify(const char* name, const char* password, const UserEntry** out) {
     if (out) *out = NULL;
-    if (!name || !name[0]) return USER_ERR_NOUSER;
+    if (!name || !name[0]) return USER_ERR_BADPW;
 
-    UserEntry* u = NULL;
-    for (uint32_t i = 0; i < g_user_count; i++)
-        if (kstrcmp(g_users[i].name, name) == 0) { u = &g_users[i]; break; }
-    if (!u) return USER_ERR_NOUSER;
+    UserEntry* u = (UserEntry*)find_nocase(name);
+    if (!u) {
+        // Usuário inexistente: faz o MESMO trabalho (um PBKDF2) e devolve o
+        // MESMO erro de senha errada — nem a mensagem nem o tempo revelam
+        // se a conta existe.
+        static const uint8_t dummy_salt[16] = {0};
+        char hx[65];
+        hash_password(password ? password : "", dummy_salt, hx);
+        kmemset(hx, 0, sizeof(hx));
+        return USER_ERR_BADPW;
+    }
     if (u->flags & USER_FLAG_LOCKED) return USER_ERR_LOCKED;
+    if (u->locked_until && timer_ticks < u->locked_until) return USER_ERR_THROTTLED;
 
     bool upgrade = false;
     int r = entry_check_password(u, password, &upgrade);
-    if (r != USER_OK) return r;
+    if (r != USER_OK) {
+        register_failure(u);
+        return r;
+    }
 
+    u->fail_count = 0;
+    u->locked_until = 0;
     if (upgrade) {                       // hash FNV antigo -> PBKDF2 com salt
         entry_set_password(u, password);
         save_passwd();
