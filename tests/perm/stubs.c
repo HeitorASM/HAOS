@@ -49,11 +49,13 @@ void kitoa(int64_t n, char* buf) { if (n < 0) { buf[0]='-'; kuitoa((uint64_t)-n,
 // ---- disco: "persistente" de mentira que só conta as gravações ----
 int g_save_count = 0;
 BlockDevice* ata_pio_device(void) { return NULL; }
+#ifndef REAL_HAOSFS   // tests/haosfs usa o haosfs.c de verdade e seu próprio disco
 BlockDevice* storage_device(void)  { return NULL; }
 HaosFsProbe  haosfs_probe(BlockDevice* d)  { (void)d; return HAOSFS_EMPTY; }
 bool         haosfs_format(BlockDevice* d) { (void)d; return 1; }
 bool         haosfs_mount(BlockDevice* d, VfsNode* r) { (void)d; (void)r; return 0; }
 bool         haosfs_save(BlockDevice* d, VfsNode* r)  { (void)d; (void)r; g_save_count++; return 1; }
+#endif
 
 volatile uint64_t timer_ticks = 12345;
 void rtc_read_time(rtc_time_t* t) { memset(t, 0, sizeof(*t)); t->second = (uint8_t)(timer_ticks++ & 59); }
