@@ -1,3 +1,4 @@
+#include "acpi.h"
 #include "types.h"
 #include "gdt.h"
 #include "idt.h"
@@ -102,6 +103,9 @@ void kernel_main(uint32_t magic, uint32_t mb_info_raw) {
     // quando implementarmos Ring 3 com espaços de endereço próprios
     // por processo).
     paging_init();
+
+    // ACPI (desligar/reiniciar de verdade): precisa do identity-map já pronto.
+    acpi_init(mb_info_raw);
 
     // Percorre tags para encontrar o framebuffer
     uint8_t* ptr = (uint8_t*)(uintptr_t)(mb_info_raw + 8);

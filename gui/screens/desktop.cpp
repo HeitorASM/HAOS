@@ -1,5 +1,6 @@
 // gui/screens/desktop.cpp — Loop principal do desktop
 #include "desktop.h"
+#include "../../kernel/power.h"
 #include "../core/wm.h"
 #include "../elements/icons.h"
 #include "../elements/taskbar.h"
@@ -251,8 +252,7 @@ extern "C" void run_desktop(void) {
                                         (int32_t)(sh / 2 - 220));
                     start_menu_open = false;
                 } else if (item == 6) {
-                    outb(0x64, 0xFE);
-                    while(1) __asm__("hlt");
+                    power_shutdown();        // sync + ACPI S5 (antes: só reiniciava, sem gravar)
                 } else if (item == -1) {
                     start_menu_open = false;
                 }

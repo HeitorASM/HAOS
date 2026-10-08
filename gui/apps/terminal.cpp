@@ -1,3 +1,4 @@
+#include "../../kernel/power.h"
 #include "terminal.h"
 #include "../core/wm.h"
 #include "../../drivers/fb.h"
@@ -165,6 +166,7 @@ static void cmd_help(TermState* t) {
     term_println(t, tr(STR_TERM_HELP_DATE));
     term_println(t, tr(STR_TERM_HELP_MEM));
     term_println(t, tr(STR_TERM_HELP_REBOOT));
+    term_println(t, tr(STR_TERM_HELP_SHUTDOWN));
     term_println(t, tr(STR_TERM_HELP_LANG));
     term_println(t, "");
     term_println(t, tr(STR_TERM_HELP_FS_HEADER));
@@ -228,9 +230,12 @@ static void cmd_mem(TermState* t) {
 
 static void cmd_reboot(TermState* t) {
     (void)t;
-    vfs_sync();
-    outb(0x64, 0xFE);
-    while(1) __asm__("hlt");
+    power_reboot();      // sync + reset ACPI/8042/0xCF9
+}
+
+static void cmd_shutdown(TermState* t) {
+    (void)t;
+    power_shutdown();    // sync + ACPI S5
 }
 
 static void cmd_lang(TermState* t, const char* arg) {
@@ -1145,6 +1150,8 @@ static void term_execute(TermState* t, const char* input) {
         cmd_mem(t);
     } else if (kstrcmp(cmd, "reboot") == 0) {
         cmd_reboot(t);
+    } else if (kstrcmp(cmd, "shutdown") == 0 || kstrcmp(cmd, "poweroff") == 0) {
+        cmd_shutdown(t);
     } else if (kstrcmp(cmd, "pwd") == 0) {
         cmd_pwd(t);
     } else if (kstrcmp(cmd, "ls") == 0) {
