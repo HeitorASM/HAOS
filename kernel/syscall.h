@@ -170,7 +170,8 @@ extern "C" {
 #define SYS_CHMOD       29 // sys_chmod(const char* path, uint64_t path_len, uint64_t mode)
                             // -> 0 ou -1. Só o DONO do arquivo muda as permissões;
                             // mode = 0..01777 (rwxrwxrwx + sticky).
-#define SYS_COUNT     30
+#define SYS_GETRANDOM 30 // sys_getrandom(void* buf, uint64_t len) -> len ou -1. len <= 256.
+#define SYS_COUNT     31
 
 // ---- whence de sys_lseek ----
 #define SEEK_SET  0

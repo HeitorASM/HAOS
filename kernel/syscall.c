@@ -15,6 +15,7 @@
 //                          houver um scheduler de verdade.
 // ============================================================
 
+#include "random.h"
 #include "syscall.h"
 #include "gdt.h"
 #include "types.h"
@@ -914,6 +915,16 @@ static uint64_t sys_unlink(uint64_t user_path_ptr, uint64_t path_len) {
 static uint64_t sys_getuid(void) { return task_current()->uid; }
 static uint64_t sys_getgid(void) { return task_current()->gid; }
 
+static uint64_t sys_getrandom(uint64_t user_buf_ptr, uint64_t len) {
+    if (len == 0 || len > 256) return (uint64_t)-1;
+    if (!validate_user_range_writable(user_buf_ptr, len)) return (uint64_t)-1;
+    uint8_t tmp[256];
+    rng_bytes(tmp, (size_t)len);
+    kmemcpy((void*)user_buf_ptr, tmp, (size_t)len);
+    kmemset(tmp, 0, sizeof(tmp));
+    return len;
+}
+
 static uint64_t sys_chmod(uint64_t user_path_ptr, uint64_t path_len, uint64_t mode) {
     char path[SYS_OPEN_MAX_PATH];
     if (!copy_user_path(user_path_ptr, path_len, path)) return (uint64_t)-1;
@@ -1098,6 +1109,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_GETUID:      return sys_getuid();
         case SYS_GETGID:      return sys_getgid();
         case SYS_CHMOD:       return sys_chmod(a1, a2, a3);
+        case SYS_GETRANDOM:   return sys_getrandom(a1, a2);
         default:        return (uint64_t)-1; // syscall desconhecida
     }
 }

@@ -1,5 +1,6 @@
 #include "user.h"
 #include "sha256.h"
+#include "random.h"
 #include "memory.h"
 #include "lang.h"
 #include "../fs/vfs.h"
@@ -132,34 +133,8 @@ static void fnv_hex(uint32_t h, char out[9]) {
 // fontes que variam entre boots e entre chamadas (TSC, ticks do PIT, relógio
 // RTC, endereço de pilha, contador) com SHA-256, encadeando o estado.
 
-static uint8_t  g_rng_pool[32];
-static uint32_t g_rng_counter = 0;
-
 static void random_bytes(uint8_t* out, size_t n) {
-    uint32_t lo, hi;
-    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
-
-    rtc_time_t rt;
-    kmemset(&rt, 0, sizeof(rt));
-    rtc_read_time(&rt);
-
-    uint64_t ticks = timer_ticks;
-    uint64_t sp    = (uint64_t)(uintptr_t)&rt;
-    g_rng_counter++;
-
-    sha256_ctx c;
-    sha256_init(&c);
-    sha256_update(&c, g_rng_pool, sizeof(g_rng_pool));
-    sha256_update(&c, &lo, sizeof(lo));
-    sha256_update(&c, &hi, sizeof(hi));
-    sha256_update(&c, &ticks, sizeof(ticks));
-    sha256_update(&c, &rt, sizeof(rt));
-    sha256_update(&c, &sp, sizeof(sp));
-    sha256_update(&c, &g_rng_counter, sizeof(g_rng_counter));
-    sha256_final(&c, g_rng_pool);
-
-    if (n > sizeof(g_rng_pool)) n = sizeof(g_rng_pool);
-    kmemcpy(out, g_rng_pool, n);
+    rng_bytes(out, n);   // kernel/random.c: RDSEED/RDRAND + jitter + DRBG
 }
 
 // ---- Senhas -------------------------------------------------------------

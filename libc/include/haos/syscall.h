@@ -55,6 +55,7 @@ extern "C" {
 #define SYS_GETUID      27
 #define SYS_GETGID      28
 #define SYS_CHMOD       29
+#define SYS_GETRANDOM   30
 
 // Flags de open2() — espelham os O_* de kernel/syscall.h.
 #ifndef O_RDONLY

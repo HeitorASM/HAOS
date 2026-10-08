@@ -72,6 +72,7 @@ C_SRCS   = kernel/kernel.c        \
            kernel/keyboard.c      \
            kernel/lang.c          \
            kernel/sha256.c        \
+           kernel/random.c        \
            kernel/user.c          \
            drivers/fb.c           \
            drivers/utf8cp437.c    \

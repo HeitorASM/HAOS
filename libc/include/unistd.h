@@ -124,6 +124,8 @@ int getpid(void);
 // o sistema inteiro só é "root" no próprio kernel. Cada conta tem uid >= 1000.
 int getuid(void);
 int getgid(void);
+// Preenche buf com len (1..256) bytes aleatórios do kernel. Retorna len ou -1.
+int getrandom(void* buf, unsigned long len);
 
 // Muda as permissões de um arquivo/diretório (estilo Unix, ex.: 0644, 0600).
 // Só o DONO pode. Retorna 0 ou -1 (sem permissão / não existe).

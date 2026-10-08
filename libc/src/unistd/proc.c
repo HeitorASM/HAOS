@@ -25,3 +25,7 @@ int getuid(void) {
 int getgid(void) {
     return (int)haos_syscall(SYS_GETGID, 0, 0, 0, 0, 0);
 }
+
+int getrandom(void* buf, unsigned long len) {
+    return (int)haos_syscall(SYS_GETRANDOM, (long)buf, (long)len, 0, 0, 0);
+}
