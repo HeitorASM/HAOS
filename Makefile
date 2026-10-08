@@ -80,6 +80,10 @@ C_SRCS   = kernel/kernel.c        \
            drivers/mouse.c        \
            drivers/rtc.c          \
            drivers/ata_pio.c      \
+           drivers/pci.c          \
+           drivers/ahci.c         \
+           drivers/partition.c    \
+           drivers/storage.c      \
            gui/screens/boot.c     \
            gui/elements/icons.c   \
            gui/wallpaper.c        \

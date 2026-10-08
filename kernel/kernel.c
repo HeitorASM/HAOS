@@ -16,6 +16,7 @@
 #include "../drivers/mouse.h"
 #include "../drivers/rtc.h"
 #include "../drivers/ata_pio.h"
+#include "../drivers/storage.h"
 #include "../gui/gui.h"
 #include "../fs/vfs.h"
 
@@ -141,7 +142,7 @@ void kernel_main(uint32_t magic, uint32_t mb_info_raw) {
 
     mouse_init();
     rtc_init();
-    ata_pio_init();
+    storage_init();    // IDE/ATA + SATA/AHCI, com regras de segurança (drivers/storage.c)
     vfs_init();
     lang_init();
 

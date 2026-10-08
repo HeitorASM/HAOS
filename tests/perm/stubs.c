@@ -49,6 +49,7 @@ void kitoa(int64_t n, char* buf) { if (n < 0) { buf[0]='-'; kuitoa((uint64_t)-n,
 // ---- disco: "persistente" de mentira que só conta as gravações ----
 int g_save_count = 0;
 BlockDevice* ata_pio_device(void) { return NULL; }
+BlockDevice* storage_device(void)  { return NULL; }
 HaosFsProbe  haosfs_probe(BlockDevice* d)  { (void)d; return HAOSFS_EMPTY; }
 bool         haosfs_format(BlockDevice* d) { (void)d; return 1; }
 bool         haosfs_mount(BlockDevice* d, VfsNode* r) { (void)d; (void)r; return 0; }

@@ -10,6 +10,16 @@
 #define HAOSFS_INODE_SIZE       256U
 #define HAOSFS_INODE_BLOCKS     ((HAOSFS_INODE_COUNT * HAOSFS_INODE_SIZE) / HAOSFS_BLOCK_SIZE)
 #define HAOSFS_MAX_EXTENTS      8U
+// Um volume NOVO nunca passa de 1 GiB: o bitmap cabe na heap (32 KiB) e cada
+// sync não varre um disco de terabytes. Discos já formatados mantêm o
+// tamanho gravado no superbloco.
+#define HAOSFS_MAX_BLOCKS       262144U
+
+// Cache de "o que está no disco": hash 64 bits (FNV-1a) dos primeiros
+// HAOSFS_HASH_BLOCKS blocos, preenchido ao LER e ao GRAVAR. haosfs_save()
+// pula blocos cujo conteúdo não mudou — antes cada sync regravava o disco
+// todo (inclusive os 256 KiB da tabela de inodes), e era isso que travava.
+#define HAOSFS_HASH_BLOCKS      16384U
 
 typedef struct {
     uint32_t magic;
@@ -60,18 +70,57 @@ typedef struct {
     HaosInode* inodes;
 } HaosSaveContext;
 
+static uint64_t*    g_hashes;       // 0 = desconhecido
+static BlockDevice* g_hash_device;
+
+static uint64_t block_hash(const void* buffer) {
+    const uint8_t* p = (const uint8_t*)buffer;
+    uint64_t h = 1469598103934665603ULL;
+    for (uint32_t i = 0; i < HAOSFS_BLOCK_SIZE; i++) { h ^= p[i]; h *= 1099511628211ULL; }
+    return h ? h : 1;
+}
+
+// Tabela de hashes do dispositivo (zerada ao trocar de dispositivo).
+static uint64_t* hashes_for(BlockDevice* device) {
+    if (device != g_hash_device) {
+        if (g_hashes) kfree(g_hashes);
+        g_hashes = (uint64_t*)kzalloc((size_t)HAOSFS_HASH_BLOCKS * sizeof(uint64_t));
+        g_hash_device = g_hashes ? device : NULL;
+    }
+    return g_hashes;
+}
+
 static bool block_read(BlockDevice* device, uint32_t block, void* buffer) {
     if (!device || !device->read) return false;
-    return device->read(device,
-                        HAOSFS_START_LBA + (uint64_t)block * HAOSFS_SECTORS_PER_BLOCK,
-                        HAOSFS_SECTORS_PER_BLOCK, buffer) == BLOCK_OK;
+    bool ok = device->read(device,
+                           HAOSFS_START_LBA + (uint64_t)block * HAOSFS_SECTORS_PER_BLOCK,
+                           HAOSFS_SECTORS_PER_BLOCK, buffer) == BLOCK_OK;
+    if (ok && block < HAOSFS_HASH_BLOCKS) {
+        uint64_t* t = hashes_for(device);
+        if (t) t[block] = block_hash(buffer);
+    }
+    return ok;
 }
 
 static bool block_write(BlockDevice* device, uint32_t block, const void* buffer) {
     if (!device || !device->write) return false;
-    return device->write(device,
-                         HAOSFS_START_LBA + (uint64_t)block * HAOSFS_SECTORS_PER_BLOCK,
-                         HAOSFS_SECTORS_PER_BLOCK, buffer) == BLOCK_OK;
+    uint64_t h = 0;
+    uint64_t* t = (block < HAOSFS_HASH_BLOCKS) ? hashes_for(device) : NULL;
+    if (t) {
+        h = block_hash(buffer);
+        if (t[block] == h) return true;          // idêntico ao que já está no disco
+        t[block] = 0;                            // em dúvida até a gravação terminar
+    }
+    bool ok = device->write(device,
+                            HAOSFS_START_LBA + (uint64_t)block * HAOSFS_SECTORS_PER_BLOCK,
+                            HAOSFS_SECTORS_PER_BLOCK, buffer) == BLOCK_OK;
+    if (ok && t) t[block] = h;
+    return ok;
+}
+
+static bool block_flush(BlockDevice* device) {
+    if (!device || !device->flush) return true;  // sem cache de escrita a esvaziar
+    return device->flush(device) == BLOCK_OK;
 }
 
 static bool layout_for(BlockDevice* device, HaosSuperblock* super) {
@@ -80,6 +129,7 @@ static bool layout_for(BlockDevice* device, HaosSuperblock* super) {
 
     uint64_t available = device->sector_count - HAOSFS_START_LBA;
     uint32_t total_blocks = (uint32_t)(available / HAOSFS_SECTORS_PER_BLOCK);
+    if (total_blocks > HAOSFS_MAX_BLOCKS) total_blocks = HAOSFS_MAX_BLOCKS;
     uint32_t bitmap_blocks = (total_blocks + 32767U) / 32768U;
 
     if (total_blocks <= 1U + bitmap_blocks + HAOSFS_INODE_BLOCKS)
@@ -280,10 +330,14 @@ bool haosfs_save(BlockDevice* device, VfsNode* root) {
         ok = block_write(device, context.super.inode_start + block,
                          (uint8_t*)context.inodes + block * HAOSFS_BLOCK_SIZE);
 
+    // Dados/bitmap/inodes precisam estar NA MÍDIA antes do superbloco: o
+    // superbloco novo (generation+1) é o que "confirma" a gravação.
+    if (ok) ok = block_flush(device);
     context.super.generation++;
     kmemset(super_block, 0, sizeof(super_block));
     kmemcpy(super_block, &context.super, sizeof(context.super));
     if (ok) ok = block_write(device, 0, super_block);
+    if (ok) ok = block_flush(device);
     kfree(context.bitmap);
     kfree(context.inodes);
     return ok;

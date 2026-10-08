@@ -1,7 +1,7 @@
 #include "vfs.h"
 #include "../kernel/memory.h"
 #include "haosfs.h"
-#include "../drivers/ata_pio.h"
+#include "../drivers/storage.h"
 #include "../kernel/generated/hello_hexec_data.h"
 #include "../kernel/generated/calc_hexec_data.h"
 
@@ -31,7 +31,7 @@ static bool g_batch_dirty = false;
 static bool vfs_persist(void) {
     if (!g_persistent) return true;
     if (g_batch_depth > 0) { g_batch_dirty = true; return true; }
-    return haosfs_save(ata_pio_device(), g_root);
+    return haosfs_save(storage_device(), g_root);
 }
 
 void vfs_batch_begin(void) { g_batch_depth++; }
@@ -40,7 +40,7 @@ bool vfs_batch_end(void) {
     if (g_batch_depth > 0) g_batch_depth--;
     if (g_batch_depth == 0 && g_batch_dirty) {
         g_batch_dirty = false;
-        return g_persistent ? haosfs_save(ata_pio_device(), g_root) : true;
+        return g_persistent ? haosfs_save(storage_device(), g_root) : true;
     }
     return true;
 }
@@ -187,7 +187,7 @@ void vfs_init(void) {
     g_root = vfs_alloc_node("/", VFS_DIR);
     g_cwd  = g_root;
 
-    BlockDevice* device = ata_pio_device();
+    BlockDevice* device = storage_device();
     HaosFsProbe probe = haosfs_probe(device);
     if (probe == HAOSFS_VALID && haosfs_mount(device, g_root)) {
         // Atualiza /bin com os executáveis embutidos nesta versão do

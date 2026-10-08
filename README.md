@@ -224,8 +224,8 @@ arquivos persistentes.
 ## Limitações Técnicas Atuais
 
 1. **Escalabilidade do FS:** Limite de 128 itens por diretório e 1 MB por arquivo.
-2. **Controlador:** O driver atual suporta ATA/IDE PIO, não AHCI/SATA nativo.
-3. **Particionamento:** O HAOSFS usa o volume inteiro e ainda não lê MBR ou GPT.
+2. **Controlador:** IDE/ATA (PIO) e SATA/AHCI (DMA) suportados; ainda não há NVMe nem USB. Ver [docs/ARMAZENAMENTO.md](docs/ARMAZENAMENTO.md).
+3. **Particionamento:** lê MBR e GPT (somente leitura) e só usa partição HAOS, disco em branco ou HAOSFS já existente — nunca toca em discos de outros sistemas.
 4. **Robustez:** Ainda não há journaling nem recuperação garantida se a energia for interrompida durante uma gravação.
 5. **Isolamento de Processos:** Programas `.hexec` rodam em Ring 3 com espaço de endereçamento próprio e scheduler preemptivo, e agora também com identidade (`uid`/`gid`) e permissões de arquivo. Ainda não há grupos compartilhados, nem configurações por usuário (tema/idioma/wallpaper são globais).
 6. **Drivers:** Ainda não há suporte a USB, PCI, ACPI avançado ou som.
