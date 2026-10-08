@@ -86,6 +86,8 @@ C_SRCS   = kernel/kernel.c        \
            drivers/ahci.c         \
            drivers/partition.c    \
            drivers/storage.c      \
+           drivers/xhci.c         \
+           drivers/usb_hid.c      \
            gui/screens/boot.c     \
            gui/elements/icons.c   \
            gui/wallpaper.c        \

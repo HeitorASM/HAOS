@@ -1,6 +1,7 @@
 #include "keyboard.h"
 #include "types.h"
 #include "random.h"
+#include "../drivers/xhci.h"
 
 // Scancode tables (normal e shift)
 static const uint8_t sc_normal[128] = {
@@ -162,7 +163,12 @@ void keyboard_init(void) {
     keyboard_tl = 0;
 }
 
+// Entrada vinda do USB (drivers/usb_hid.c): scancodes PS/2 set 1, com 0xE0 antes
+// das teclas estendidas e bit 7 ligado ao soltar — o mesmo fluxo do hardware PS/2.
+void keyboard_inject_scancode(uint8_t sc) { process_scancode(sc); }
+
 void keyboard_poll(void) {
+    xhci_poll();    // eventos USB (teclado/mouse); no-op se não há xHCI
     // Processa todos os scancodes pendentes no ring buffer da ISR
     while (keyboard_tl != keyboard_hd) {
         uint8_t sc = keyboard_buf[keyboard_tl];

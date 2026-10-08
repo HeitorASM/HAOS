@@ -1,0 +1,103 @@
+#include "usb_hid.h"
+#include "mouse.h"
+#include "../kernel/keyboard.h"
+
+extern volatile uint64_t timer_ticks;     // 100 Hz
+
+#define EXT 0x100u    // scancode com prefixo 0xE0
+
+// Usage HID (página "Keyboard", 0x04..0x64) -> scancode PS/2 set 1.
+static const uint16_t hid2sc[0x65] = {
+    [0x04]=0x1E,[0x05]=0x30,[0x06]=0x2E,[0x07]=0x20,[0x08]=0x12,[0x09]=0x21,[0x0A]=0x22,
+    [0x0B]=0x23,[0x0C]=0x17,[0x0D]=0x24,[0x0E]=0x25,[0x0F]=0x26,[0x10]=0x32,[0x11]=0x31,
+    [0x12]=0x18,[0x13]=0x19,[0x14]=0x10,[0x15]=0x13,[0x16]=0x1F,[0x17]=0x14,[0x18]=0x16,
+    [0x19]=0x2F,[0x1A]=0x11,[0x1B]=0x2D,[0x1C]=0x15,[0x1D]=0x2C,
+    [0x1E]=0x02,[0x1F]=0x03,[0x20]=0x04,[0x21]=0x05,[0x22]=0x06,[0x23]=0x07,[0x24]=0x08,
+    [0x25]=0x09,[0x26]=0x0A,[0x27]=0x0B,
+    [0x28]=0x1C,[0x29]=0x01,[0x2A]=0x0E,[0x2B]=0x0F,[0x2C]=0x39,[0x2D]=0x0C,[0x2E]=0x0D,
+    [0x2F]=0x1A,[0x30]=0x1B,[0x31]=0x2B,[0x32]=0x2B,[0x33]=0x27,[0x34]=0x28,[0x35]=0x29,
+    [0x36]=0x33,[0x37]=0x34,[0x38]=0x35,[0x39]=0x3A,
+    [0x3A]=0x3B,[0x3B]=0x3C,[0x3C]=0x3D,[0x3D]=0x3E,[0x3E]=0x3F,[0x3F]=0x40,[0x40]=0x41,
+    [0x41]=0x42,[0x42]=0x43,[0x43]=0x44,[0x44]=0x57,[0x45]=0x58,
+    [0x47]=0x46,
+    [0x49]=EXT|0x52,[0x4A]=EXT|0x47,[0x4B]=EXT|0x49,[0x4C]=EXT|0x53,[0x4D]=EXT|0x4F,
+    [0x4E]=EXT|0x51,[0x4F]=EXT|0x4D,[0x50]=EXT|0x4B,[0x51]=EXT|0x50,[0x52]=EXT|0x48,
+    [0x53]=0x45,[0x54]=EXT|0x35,[0x55]=0x37,[0x56]=0x4A,[0x57]=0x4E,[0x58]=EXT|0x1C,
+    [0x59]=0x4F,[0x5A]=0x50,[0x5B]=0x51,[0x5C]=0x4B,[0x5D]=0x4C,[0x5E]=0x4D,[0x5F]=0x47,
+    [0x60]=0x48,[0x61]=0x49,[0x62]=0x52,[0x63]=0x53,[0x64]=0x56,   // 0x64 = tecla "\|" extra
+};
+
+// Modificadores (byte 0 do relatório): LCtrl LShift LAlt LGUI RCtrl RShift RAlt RGUI
+static const uint16_t mod2sc[8] = {
+    0x1D, 0x2A, 0x38, 0, EXT|0x1D, 0x36, EXT|0x38, 0
+};
+
+static uint8_t  g_prev_mod;
+static uint8_t  g_prev_keys[6];
+static uint8_t  g_rep_usage;
+static uint64_t g_rep_next;
+
+static uint16_t usage_to_sc(uint8_t u) {
+    if (u == 0x87) return 0x73;               // ABNT2: tecla "/ ?" extra (International1)
+    return u < sizeof(hid2sc) / sizeof(hid2sc[0]) ? hid2sc[u] : 0;
+}
+
+static void emit(uint16_t code, bool release) {
+    if (!code) return;
+    if (code & EXT) keyboard_inject_scancode(0xE0);
+    keyboard_inject_scancode((uint8_t)((code & 0x7Fu) | (release ? 0x80u : 0u)));
+}
+
+static bool has_key(const uint8_t* arr, uint8_t u) {
+    for (int i = 0; i < 6; i++) if (arr[i] == u) return true;
+    return false;
+}
+
+void usb_hid_keyboard_report(const uint8_t* r, uint32_t len) {
+    if (len < 8) return;
+    if (r[2] == 0x01) return;                 // ErrorRollOver: ignora o relatório
+
+    for (int i = 0; i < 8; i++) {
+        bool now = (r[0] >> i) & 1, was = (g_prev_mod >> i) & 1;
+        if (now != was) emit(mod2sc[i], was);
+    }
+    for (int k = 0; k < 6; k++) {             // teclas soltas
+        uint8_t u = g_prev_keys[k];
+        if (u && !has_key(r + 2, u)) {
+            emit(usage_to_sc(u), true);
+            if (g_rep_usage == u) g_rep_usage = 0;
+        }
+    }
+    for (int k = 0; k < 6; k++) {             // teclas apertadas
+        uint8_t u = r[2 + k];
+        if (u && !has_key(g_prev_keys, u)) {
+            emit(usage_to_sc(u), false);
+            g_rep_usage = u;
+            g_rep_next = timer_ticks + 50;    // 500 ms até começar a repetir
+        }
+    }
+    g_prev_mod = r[0];
+    for (int k = 0; k < 6; k++) g_prev_keys[k] = r[2 + k];
+}
+
+void usb_hid_keyboard_reset(void) {
+    for (int k = 0; k < 6; k++)
+        if (g_prev_keys[k]) emit(usage_to_sc(g_prev_keys[k]), true);
+    for (int i = 0; i < 8; i++)
+        if ((g_prev_mod >> i) & 1) emit(mod2sc[i], true);
+    g_prev_mod = 0;
+    for (int k = 0; k < 6; k++) g_prev_keys[k] = 0;
+    g_rep_usage = 0;
+}
+
+void usb_hid_tick(void) {
+    if (g_rep_usage && timer_ticks >= g_rep_next) {
+        emit(usage_to_sc(g_rep_usage), false);   // repete só o "make", como o PS/2 faz
+        g_rep_next = timer_ticks + 3;            // ~30 ms entre repetições
+    }
+}
+
+void usb_hid_mouse_report(const uint8_t* r, uint32_t len) {
+    if (len < 3) return;
+    mouse_inject((int8_t)r[1], (int8_t)r[2], r[0] & 7u, len >= 4 ? (int8_t)r[3] : 0);
+}

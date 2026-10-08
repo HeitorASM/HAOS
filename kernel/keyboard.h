@@ -39,6 +39,7 @@ void     keyboard_init(void);
 void     keyboard_poll(void);
 uint8_t  keyboard_getchar(void);
 bool     keyboard_has_data(void);
+void     keyboard_inject_scancode(uint8_t sc);   // usado pelo driver USB
 
 #ifdef __cplusplus
 }

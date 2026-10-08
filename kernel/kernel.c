@@ -1,4 +1,5 @@
 #include "acpi.h"
+#include "../drivers/xhci.h"
 #include "types.h"
 #include "gdt.h"
 #include "idt.h"
@@ -147,6 +148,7 @@ void kernel_main(uint32_t magic, uint32_t mb_info_raw) {
     mouse_init();
     rtc_init();
     storage_init();    // IDE/ATA + SATA/AHCI, com regras de segurança (drivers/storage.c)
+    xhci_init();       // USB 3/2 (xHCI): teclado e mouse HID; no-op sem controlador
     vfs_init();
     lang_init();
 
