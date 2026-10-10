@@ -5,7 +5,7 @@
 #include "../elements/icons.h"
 #include "../elements/taskbar.h"
 #include "../elements/startmenu.h"
-#include "../elements/contextmenu.h"
+#include "../elements/menu.h"
 #include "../core/userwin.h"
 #include "../apps/terminal.h"
 #include "../apps/about.h"
@@ -21,6 +21,7 @@
 #include "../../kernel/lang.h"
 #include "../../kernel/task.h"
 #include "../wallpaper.h"
+#include "../core/theme.h"
 
 extern "C" volatile uint64_t timer_ticks;
 
@@ -32,9 +33,15 @@ static void handle_desktop_key(uint8_t c);
 static void desktop_handle_click(int32_t mx, int32_t my, uint32_t sw, uint32_t sh);
 
 static void handle_desktop_key(uint8_t c) {
+    // Menu popup aberto: navega por ele (setas/Enter/Esc) e engole a tecla;
+    // só Alt+Tab / Alt+F4 passam, fechando o menu antes.
+    if (menu_is_open()) {
+        if (c == KEY_SWITCH_WINDOW || c == KEY_CLOSE_WINDOW) menu_close();
+        else if (menu_key(c)) return;
+    }
+
     if (c == 27) {
         start_menu_open = false;
-        contextmenu_close();
         return;
     }
 
@@ -44,7 +51,6 @@ static void handle_desktop_key(uint8_t c) {
     // funcionarem independentemente do app que estiver ativo.
     if (c == KEY_SWITCH_WINDOW) {
         start_menu_open = false;
-        contextmenu_close();
         wm_focus_next();
         return;
     }
@@ -103,32 +109,92 @@ static void desktop_handle_click(int32_t mx, int32_t my, uint32_t sw, uint32_t s
 // -------------------------------------------------------------
 // Ações do menu de contexto do desktop (botão direito)
 // -------------------------------------------------------------
-// `item` segue a ordem de contextmenu.h: 0 Terminal, 1 Editor,
-// 2 Arquivos, 3 Configurações, 4 Sobre. Mesmas chamadas dos ícones
-// do desktop / menu Iniciar.
-static void desktop_context_action(int item, uint32_t sw, uint32_t sh) {
-    switch (item) {
-        case 0:
-            if (!terminal_win || !terminal_win->active)
-                terminal_win = terminal_create((int32_t)(sw/2 - 340), (int32_t)(sh/2 - 200));
-            else
-                wm_focus(terminal_win);
-            break;
-        case 1:
-            editor_create((int32_t)(sw/2 - 300), (int32_t)(sh/2 - 200), nullptr);
-            break;
-        case 2:
-            file_manager_create((int32_t)(sw/2 - 310), (int32_t)(sh/2 - 220));
-            break;
-        case 3:
-            open_config_window();
-            break;
-        case 4:
-            open_about_window();
-            break;
-        default:
-            break;
+// IDs do menu de contexto do desktop.
+enum {
+    CTX_TERMINAL = 1,
+    CTX_FILES,
+    CTX_EDITOR,
+    CTX_SETTINGS,
+    CTX_ABOUT,
+    CTX_WALLPAPER_DEFAULT = 50,
+    CTX_WALLPAPER_BASE    = 100,   // + índice do wallpaper
+    CTX_THEME_BASE        = 200    // + preset do tema
+};
+
+static void desktop_menu_activate(int id, void*) {
+    uint32_t sw = fb_width(), sh = fb_height();
+    if (id >= CTX_THEME_BASE) {
+        theme_apply_preset(id - CTX_THEME_BASE);
+    } else if (id >= CTX_WALLPAPER_BASE) {
+        wallpaper_set(id - CTX_WALLPAPER_BASE);
+    } else {
+        switch (id) {
+            case CTX_TERMINAL:
+                if (!terminal_win || !terminal_win->active)
+                    terminal_win = terminal_create((int32_t)(sw/2 - 340), (int32_t)(sh/2 - 200));
+                else
+                    wm_focus(terminal_win);
+                break;
+            case CTX_FILES:
+                file_manager_create((int32_t)(sw/2 - 310), (int32_t)(sh/2 - 220));
+                break;
+            case CTX_EDITOR:
+                editor_create((int32_t)(sw/2 - 300), (int32_t)(sh/2 - 200), nullptr);
+                break;
+            case CTX_SETTINGS:
+                open_config_window();
+                break;
+            case CTX_ABOUT:
+                open_about_window();
+                break;
+            case CTX_WALLPAPER_DEFAULT:
+                wallpaper_set(-1);
+                break;
+            default:
+                break;
+        }
     }
+}
+
+// Monta e abre o menu de contexto do desktop em (x, y).
+static void desktop_open_context_menu(int32_t x, int32_t y) {
+    menu_close();
+    menu_pool_reset();
+    Menu* m = menu_new();
+    if (!m) return;
+
+    menu_add(m, tr(STR_TERMINAL),    CTX_TERMINAL);
+    menu_add(m, tr(STR_ICON_FILES),  CTX_FILES);
+    menu_add(m, tr(STR_ICON_EDITOR), CTX_EDITOR);
+    menu_add_separator(m);
+
+    Menu* wp = menu_add_submenu(m, tr(STR_CTX_WALLPAPER));
+    if (wp) {
+        int cur = wallpaper_get();
+        menu_add(wp, tr(STR_CONFIG_DEFAULT_WALLPAPER), CTX_WALLPAPER_DEFAULT,
+                 cur < 0 ? MENU_FLAG_CHECKED : 0);
+        int n = wallpaper_count();
+        for (int i = 0; i < n && wp->count < MENU_MAX_ITEMS; i++)
+            menu_add(wp, wallpaper_name(i), CTX_WALLPAPER_BASE + i,
+                     i == cur ? MENU_FLAG_CHECKED : 0);
+    }
+
+    Menu* th = menu_add_submenu(m, tr(STR_CTX_THEME));
+    if (th) {
+        static const StrID names[THEME_PRESET_COUNT] = {
+            STR_CONFIG_THEME_DEFAULT, STR_CONFIG_THEME_TERMINAL, STR_CONFIG_THEME_XP,
+            STR_CONFIG_THEME_BW,      STR_CONFIG_THEME_CANDY
+        };
+        int cur = theme_current_preset();
+        for (int i = 0; i < THEME_PRESET_COUNT; i++)
+            menu_add(th, tr(names[i]), CTX_THEME_BASE + i, i == cur ? MENU_FLAG_CHECKED : 0);
+    }
+
+    menu_add_separator(m);
+    menu_add(m, tr(STR_SETTINGS), CTX_SETTINGS);
+    menu_add(m, tr(STR_ABOUT),    CTX_ABOUT);
+
+    menu_popup(m, x, y, desktop_menu_activate, nullptr);
 }
 
 // -------------------------------------------------------------
@@ -179,12 +245,13 @@ extern "C" void run_desktop(void) {
         // Botão direito: abre o menu de contexto do desktop, mas só sobre
         // a área livre (nem taskbar, nem uma janela). Com o menu Iniciar
         // aberto, o clique direito apenas o fecha.
+        menu_update(mx, my);     // hover do menu popup (abre/fecha submenus)
         if (mouse_right_clicked()) {
-            contextmenu_close();
+            menu_close();
             if (start_menu_open) {
                 start_menu_open = false;
             } else if (my < (int32_t)(sh - TASKBAR_H) && !wm_window_at(mx, my)) {
-                contextmenu_open(mx, my);
+                desktop_open_context_menu(mx, my);
             }
         }
 
@@ -200,15 +267,10 @@ extern "C" void run_desktop(void) {
             bool to_wm    = true;   // oferece o clique às janelas
             bool to_icons = false;  // se nenhuma janela o consumir, vale para os ícones
 
-            bool in_ctx = contextmenu_is_open() && contextmenu_contains(mx, my);
-            if (in_ctx) {
-                int item = contextmenu_hit_test(mx, my);
-                contextmenu_close();
-                if (item >= 0) desktop_context_action(item, sw, sh);
-                to_wm = false;
-            } else {
-                contextmenu_close(); // clique fora do menu o fecha e segue adiante
-            }
+            // O menu popup vem primeiro: clique dentro dele é só dele; fora, ele
+            // fecha e o clique segue adiante (taskbar, janelas, ícones).
+            bool in_ctx = menu_is_open() && menu_mouse_down(mx, my);
+            if (in_ctx) to_wm = false;
 
             if (in_ctx) {
                 // já tratado acima
@@ -313,8 +375,7 @@ extern "C" void run_desktop(void) {
         if (start_menu_open)
             draw_start_menu();
 
-        if (contextmenu_is_open())
-            draw_contextmenu(mx, my);
+        menu_draw();
 
         // Cursor muda de ícone ao passar sobre uma borda/canto
         // redimensionável da janela focada (comportamento padrão
