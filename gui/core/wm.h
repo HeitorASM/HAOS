@@ -111,6 +111,10 @@ void wm_run_deferred_actions(void);
 // alguma janela (usado pelo desktop.cpp para decidir se o clique
 // "vazou" para ícones/taskbar por baixo).
 bool    wm_mouse_down(int32_t mx, int32_t my);
+// Clique DIREITO: foca a janela sob o cursor e, se caiu na área de conteúdo,
+// entrega EventType::MouseRightDown (coordenadas absolutas de tela, como no
+// MouseDown). true = havia uma janela ali (o clique foi consumido).
+bool    wm_mouse_right_down(int32_t mx, int32_t my);
 void    wm_mouse_move(int32_t mx, int32_t my);
 void    wm_mouse_scroll(int32_t mx, int32_t my, int32_t amount);
 void    wm_mouse_up(int32_t mx, int32_t my);

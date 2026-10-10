@@ -472,6 +472,17 @@ bool wm_mouse_down(int32_t mx, int32_t my) {
     return false;
 }
 
+bool wm_mouse_right_down(int32_t mx, int32_t my) {
+    Window* win = wm_window_at(mx, my);
+    if (!win) return false;
+    if (!win->focused) wm_focus(win);
+    if (!win->minimized && in_content(win, mx, my)) {
+        WidgetEvent ev{EventType::MouseRightDown, mx, my, 0, 0};
+        win->on_event(ev);
+    }
+    return true;
+}
+
 void wm_mouse_move(int32_t mx, int32_t my) {
     Window* win = wm_get_focused();
     if (!win) return;

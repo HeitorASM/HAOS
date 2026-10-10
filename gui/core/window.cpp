@@ -85,7 +85,8 @@ EventResult Window::on_event(const WidgetEvent& ev) {
                     ev.type == EventType::MouseUp   ||
                     ev.type == EventType::MouseMove ||
                     ev.type == EventType::MouseDrag ||
-                    ev.type == EventType::MouseScroll;
+                    ev.type == EventType::MouseScroll ||
+                    ev.type == EventType::MouseRightDown;
 
     if (!is_mouse) {
         // KeyDown/Focus/Blur/Resize não carregam coordenadas de

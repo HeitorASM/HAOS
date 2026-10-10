@@ -40,6 +40,7 @@ enum class EventType : uint8_t {
     Resize,      // bounds do widget mudou (ex.: janela redimensionada)
     Paint,       // solicitação explícita de redesenho (raramente usado
                  // diretamente — draw() já cobre a maioria dos casos)
+    MouseRightDown, // botão DIREITO pressionado (só janelas que o tratam; ignorado pelo resto)
 };
 
 struct WidgetEvent {

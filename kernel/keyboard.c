@@ -100,6 +100,7 @@ static void process_scancode(uint8_t sc) {
                 case 0x51: kb_push_char(KEY_PAGE_DOWN); return;
                 case 0x47: kb_push_char(KEY_HOME);      return;
                 case 0x4F: kb_push_char(KEY_END);       return;
+                case 0x53: kb_push_char(KEY_DELETE);    return;
             }
         }
         return;

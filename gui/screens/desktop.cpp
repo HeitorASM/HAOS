@@ -250,8 +250,9 @@ extern "C" void run_desktop(void) {
             menu_close();
             if (start_menu_open) {
                 start_menu_open = false;
-            } else if (my < (int32_t)(sh - TASKBAR_H) && !wm_window_at(mx, my)) {
-                desktop_open_context_menu(mx, my);
+            } else if (my < (int32_t)(sh - TASKBAR_H)) {
+                if (wm_window_at(mx, my)) wm_mouse_right_down(mx, my);   // a janela decide
+                else                      desktop_open_context_menu(mx, my);
             }
         }
 
