@@ -12,7 +12,7 @@ usando esta libc mínima e freestanding.
   - Processos: `spawn()`, `waitpid()`, `getpid()`, `yield()`, `_exit()`
   - Tempo: `uptime_ms()`, `sleep_ms()` (resolução de 10 ms)
   - Sistema de arquivos: `stat()`, `readdir()`, `getcwd()`, `chdir()`,
-    `mkdir()`, `unlink()` — caminhos relativos são resolvidos a partir
+    `mkdir()`, `unlink()`, `rename()` — caminhos relativos são resolvidos a partir
     do diretório de trabalho **do processo** (herdado do terminal/pai)
   - Memória: `sbrk()`
   - Estruturas (`struct haos_stat`, `struct haos_dirent`): `haos/fs.h`
@@ -43,7 +43,7 @@ usando esta libc mínima e freestanding.
   do processo (redirecionado para o terminal que o lançou), não para
   um "fd 1"; fd 0 só serve para `read()` de stdin (não para `lseek()`)
 - Pipes e redirecionamento (`>`, `|`)
-- Renomear/mover arquivos, permissões, timestamps
+- Timestamps (renomear/mover já existe: `rename()`)
 - `fork()`/`exec()` — o modelo é `spawn()` + `waitpid()`
 - Sleep sem polling: `sleep_ms()` cede a CPU em laço até o prazo (a
   task continua escalonável); um bloqueio com "wake_tick" no

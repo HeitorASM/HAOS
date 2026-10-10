@@ -34,6 +34,12 @@ int unlink(const char* path) {
     return (int)haos_syscall(SYS_UNLINK, (long)path, (long)strlen(path), 0, 0, 0);
 }
 
+int rename(const char* oldpath, const char* newpath) {
+    if (!oldpath || !newpath) return -1;
+    return (int)haos_syscall(SYS_RENAME, (long)oldpath, (long)strlen(oldpath),
+                             (long)newpath, (long)strlen(newpath), 0);
+}
+
 long lseek(int fd, long offset, int whence) {
     if (fd < 0) return -1;
     return haos_syscall(SYS_LSEEK, fd, offset, whence, 0, 0);

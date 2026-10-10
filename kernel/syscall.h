@@ -171,7 +171,8 @@ extern "C" {
                             // -> 0 ou -1. Só o DONO do arquivo muda as permissões;
                             // mode = 0..01777 (rwxrwxrwx + sticky).
 #define SYS_GETRANDOM 30 // sys_getrandom(void* buf, uint64_t len) -> len ou -1. len <= 256.
-#define SYS_COUNT     31
+#define SYS_RENAME    31 // sys_rename(old, old_len, new, new_len) -> 0 ou -1. Move/renomeia; não sobrescreve.
+#define SYS_COUNT     32
 
 // ---- whence de sys_lseek ----
 #define SEEK_SET  0

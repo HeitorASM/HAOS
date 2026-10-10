@@ -400,6 +400,95 @@ bool vfs_sync(void) {
     return vfs_persist();
 }
 
+// ---- Renomear / mover / copiar ----------------------------------
+bool vfs_name_valid(const char* name) {
+    if (!name || !name[0]) return false;
+    if (kstrlen(name) >= VFS_NAME_MAX) return false;
+    if (kstrcmp(name, ".") == 0 || kstrcmp(name, "..") == 0) return false;
+    for (const char* p = name; *p; p++)
+        if (*p == '/') return false;
+    return true;
+}
+
+// `anc` é `n` ou algum ancestral de `n`?
+static bool vfs_is_ancestor_or_self(const VfsNode* anc, const VfsNode* n) {
+    for (; n; n = n->parent)
+        if (n == anc) return true;
+    return false;
+}
+
+bool vfs_rename(VfsNode* node, VfsNode* new_parent, const char* new_name) {
+    if (!node || node->removed || !node->parent || node == g_root) return false;
+    if (!new_parent || new_parent->removed || new_parent->type != VFS_DIR) return false;
+    if (!vfs_name_valid(new_name)) return false;
+    if (vfs_is_ancestor_or_self(node, new_parent)) return false;   // pasta dentro de si mesma
+
+    VfsNode* existing = vfs_find_child(new_parent, new_name);
+    if (existing && existing != node) return false;                // não sobrescreve
+
+    VfsNode* old_parent = node->parent;
+    if (old_parent != new_parent) {
+        if (new_parent->child_count >= VFS_MAX_CHILDREN) return false;
+        for (uint32_t i = 0; i < old_parent->child_count; i++) {
+            if (old_parent->children[i] == node) {
+                for (uint32_t j = i; j + 1 < old_parent->child_count; j++)
+                    old_parent->children[j] = old_parent->children[j + 1];
+                old_parent->children[--old_parent->child_count] = NULL;
+                break;
+            }
+        }
+        new_parent->children[new_parent->child_count++] = node;
+        node->parent = new_parent;
+    }
+    kmemset(node->name, 0, sizeof(node->name));
+    kstrncpy(node->name, new_name, VFS_NAME_MAX - 1);
+    return vfs_persist();
+}
+
+// Copia recursiva. `depth` limita a recursão (árvores absurdamente profundas).
+static VfsNode* copy_tree(const VfsNode* src, VfsNode* dst_parent, const char* name, uint32_t depth) {
+    if (depth > 32) return NULL;
+    VfsNode* n;
+    if (src->type == VFS_DIR) {
+        n = vfs_mkdir(dst_parent, name);
+        if (!n) return NULL;
+        for (uint32_t i = 0; i < src->child_count; i++) {
+            const VfsNode* ch = src->children[i];
+            if (ch->removed) continue;
+            if (!copy_tree(ch, n, ch->name, depth + 1)) return NULL;
+        }
+    } else {
+        n = vfs_touch(dst_parent, name);
+        if (!n) return NULL;
+        if (src->size > 0) {
+            if (!vfs_ensure_capacity(n, src->size + 1)) return NULL;
+            kmemcpy(n->data, src->data, src->size);
+            n->data[src->size] = 0;
+            n->size = src->size;
+        }
+    }
+    n->uid = src->uid;
+    n->gid = src->gid;
+    n->mode = src->mode;
+    return n;
+}
+
+VfsNode* vfs_copy(const VfsNode* src, VfsNode* dst_parent, const char* dst_name) {
+    if (!src || src->removed || !dst_parent || dst_parent->removed) return NULL;
+    if (dst_parent->type != VFS_DIR || !vfs_name_valid(dst_name)) return NULL;
+    if (vfs_find_child(dst_parent, dst_name)) return NULL;                 // não sobrescreve
+    if (src->type == VFS_DIR && vfs_is_ancestor_or_self(src, dst_parent)) return NULL;
+
+    vfs_batch_begin();
+    VfsNode* n = copy_tree(src, dst_parent, dst_name, 0);
+    if (!n) {                                                              // desfaz o parcial
+        VfsNode* partial = vfs_find_child(dst_parent, dst_name);
+        if (partial) vfs_remove_node(partial);
+    }
+    vfs_batch_end();
+    return n;
+}
+
 void vfs_path_of(VfsNode* node, char* buf, size_t bufsz) {
     if (!node || !buf || bufsz == 0) return;
     if (node == g_root) { buf[0] = '/'; buf[1] = 0; return; }

@@ -378,6 +378,115 @@ static void test_login_hardening(void) {
     CHECK(user_verify("ana", "pw", NULL) == USER_OK);
 }
 
+static void test_rename_copy(void) {
+    printf("[10] mover, renomear e copiar\n");
+    fresh();
+    user_create("ana", "x", 0);
+    user_create("bob", "x", 0);
+    Cred a = user_cred("ana"), b = user_cred("bob");
+    VfsNode* ahome = at("/home/ana");
+    VfsNode* bhome = at("/home/bob");
+    int e = 0;
+
+    VfsNode* f1 = vfs_touch_as(&a, ahome, "a.txt", &e);
+    CHECK(f1 && vfs_write(f1, "conteudo"));
+
+    // renomear na mesma pasta: UMA gravação, conteúdo e dono intactos
+    int before = g_save_count;
+    CHECK(vfs_rename_as(&a, f1, ahome, "b.txt") == PERM_OK);
+    CHECK(g_save_count - before == 1);
+    CHECK(at("/home/ana/b.txt") == f1 && !at("/home/ana/a.txt"));
+    CHECK(strcmp(content(f1), "conteudo") == 0 && f1->uid == a.uid);
+
+    // mover para uma subpasta
+    VfsNode* d = vfs_mkdir_as(&a, ahome, "d", &e);
+    CHECK(d != NULL);
+    CHECK(vfs_rename_as(&a, f1, d, "b.txt") == PERM_OK);
+    CHECK(at("/home/ana/d/b.txt") == f1 && !at("/home/ana/b.txt"));
+    CHECK(f1->parent == d && d->child_count == 1 && ahome->child_count >= 1);
+
+    // não sobrescreve
+    VfsNode* x = vfs_touch_as(&a, ahome, "x.txt", &e);
+    CHECK(x != NULL);
+    CHECK(vfs_rename_as(&a, f1, ahome, "x.txt") == PERM_EINVAL);
+    CHECK(at("/home/ana/d/b.txt") == f1);                    // continua onde estava
+
+    // nomes inválidos
+    CHECK(vfs_rename_as(&a, f1, d, "") == PERM_EINVAL);
+    CHECK(vfs_rename_as(&a, f1, d, ".") == PERM_EINVAL);
+    CHECK(vfs_rename_as(&a, f1, d, "..") == PERM_EINVAL);
+    CHECK(vfs_rename_as(&a, f1, d, "a/b") == PERM_EINVAL);
+    CHECK(vfs_rename_as(&a, f1, d, "b.txt") == PERM_OK);     // mesmo nome: sem efeito
+
+    // pasta dentro de si mesma / de um descendente
+    VfsNode* sub = vfs_mkdir_as(&a, d, "sub", &e);
+    CHECK(sub != NULL);
+    CHECK(vfs_rename_as(&a, d, d, "d") == PERM_EINVAL);
+    CHECK(vfs_rename_as(&a, d, sub, "d") == PERM_EINVAL);
+    CHECK(vfs_rename_as(&a, vfs_root(), ahome, "r") == PERM_EINVAL);    // raiz
+
+    // permissões: bob não mexe em /home/ana (0700)
+    CHECK(vfs_rename_as(&b, f1, d, "roubado") == PERM_EACCES);
+    CHECK(vfs_rename_as(&b, f1, bhome, "roubado") == PERM_EACCES);
+    CHECK(vfs_rename_as(&a, f1, bhome, "presente") == PERM_EACCES);     // sem W+X no destino
+    CHECK(at("/home/ana/d/b.txt") == f1);
+
+    // sticky (/tmp): bob não renomeia o arquivo da ana
+    VfsNode* tmp = at("/tmp");
+    CHECK(tmp != NULL);
+    if (tmp) {
+        VfsNode* tf = vfs_touch_as(&a, tmp, "f", &e);
+        CHECK(tf != NULL);
+        CHECK(vfs_rename_as(&b, tf, tmp, "g") == PERM_EACCES);
+        CHECK(vfs_rename_as(&a, tf, tmp, "g") == PERM_OK);
+    }
+
+    // cópia de pasta: árvore independente, dono = quem copiou, UMA gravação
+    VfsNode* inner = at("/home/ana/d/b.txt");
+    before = g_save_count;
+    VfsNode* d2 = NULL;
+    CHECK(vfs_copy_as(&a, d, ahome, "d2", &d2) == PERM_OK && d2);
+    CHECK(g_save_count - before == 1);
+    VfsNode* c = at("/home/ana/d2/b.txt");
+    CHECK(c && c != inner && strcmp(content(c), "conteudo") == 0);
+    CHECK(c && c->data != inner->data && c->uid == a.uid);
+    CHECK(at("/home/ana/d2/sub") != NULL);
+    vfs_write(c, "mudou");
+    CHECK(strcmp(content(inner), "conteudo") == 0);                     // original intacto
+
+    // cópia: sem sobrescrever, pasta dentro de si mesma, nome inválido
+    CHECK(vfs_copy_as(&a, d, ahome, "d2", NULL) == PERM_EINVAL);
+    CHECK(vfs_copy_as(&a, d, sub, "dentro", NULL) == PERM_EINVAL);
+    CHECK(!at("/home/ana/d/sub/dentro"));
+    CHECK(vfs_copy_as(&a, d, ahome, "a/b", NULL) == PERM_EINVAL);
+
+    // cópia respeita leitura e escrita
+    CHECK(vfs_copy_as(&b, inner, bhome, "c.txt", NULL) == PERM_OK);     // arquivo 0644: bob pode ler
+    CHECK(at("/home/bob/c.txt") && at("/home/bob/c.txt")->uid == b.uid);
+    CHECK(vfs_chmod_as(&a, inner, 0600) == PERM_OK);
+    CHECK(vfs_copy_as(&b, inner, bhome, "c2.txt", NULL) == PERM_EACCES); // agora 0600: não
+    CHECK(vfs_copy_as(&b, d2, ahome, "d3", NULL) == PERM_EACCES);        // sem W+X no destino
+    CHECK(!at("/home/ana/d3") && !at("/home/bob/c2.txt"));
+
+    // cópia de arquivo preserva o modo
+    VfsNode* priv = vfs_touch_as(&a, ahome, "priv.txt", &e);
+    CHECK(priv && vfs_write(priv, "s") && vfs_chmod_as(&a, priv, 0600) == PERM_OK);
+    CHECK(vfs_copy_as(&a, priv, ahome, "priv2.txt", NULL) == PERM_OK);
+    CHECK(at("/home/ana/priv2.txt") && at("/home/ana/priv2.txt")->mode == 0600);
+
+    // vfs_resolve_parent_as
+    VfsNode* par = NULL;
+    char nm[VFS_NAME_MAX];
+    CHECK(vfs_resolve_parent_as(&a, vfs_root(), "/home/ana/novo.txt", &par, nm) == PERM_OK);
+    CHECK(par == ahome && strcmp(nm, "novo.txt") == 0);
+    CHECK(vfs_resolve_parent_as(&a, ahome, "rel", &par, nm) == PERM_OK && par == ahome && strcmp(nm, "rel") == 0);
+    CHECK(vfs_resolve_parent_as(&a, vfs_root(), "/home/ana/d/", &par, nm) == PERM_OK);
+    CHECK(par == ahome && strcmp(nm, "d") == 0);                        // '/' final é ignorada
+    CHECK(vfs_resolve_parent_as(&a, vfs_root(), "/", &par, nm) == PERM_EINVAL);
+    CHECK(vfs_resolve_parent_as(&a, vfs_root(), "/nada/x", &par, nm) != PERM_OK);
+    CHECK(vfs_resolve_parent_as(&b, vfs_root(), "/home/ana/x", &par, nm) == PERM_EACCES);
+}
+
 int main(void) {
     test_fresh_install();
     test_delete_rules();
@@ -388,6 +497,7 @@ int main(void) {
     test_passwd_parsing();
     test_session();
     test_login_hardening();
+    test_rename_copy();
     printf("\n%d verificacoes, %d falha(s)\n", checks, fails);
     return fails ? 1 : 0;
 }

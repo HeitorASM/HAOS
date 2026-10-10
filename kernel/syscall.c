@@ -912,6 +912,25 @@ static uint64_t sys_unlink(uint64_t user_path_ptr, uint64_t path_len) {
     return vfs_remove_as(&cred, n) == PERM_OK ? 0 : (uint64_t)-1;
 }
 
+// rename(old, new): move/renomeia. O destino é "pasta-pai + nome novo" (não
+// entra em pasta existente como o `mv` do shell) e nunca sobrescreve.
+static uint64_t sys_rename(uint64_t old_ptr, uint64_t old_len, uint64_t new_ptr, uint64_t new_len) {
+    char oldp[SYS_OPEN_MAX_PATH], newp[SYS_OPEN_MAX_PATH];
+    if (!copy_user_path(old_ptr, old_len, oldp)) return (uint64_t)-1;
+    if (!copy_user_path(new_ptr, new_len, newp)) return (uint64_t)-1;
+
+    task_t* t = task_current();
+    Cred cred = task_cred(t);
+    VfsNode* src = NULL;
+    if (vfs_resolve_as(&cred, task_cwd(t), oldp, &src) != PERM_OK || !src) return (uint64_t)-1;
+    if (src == vfs_root()) return (uint64_t)-1;
+
+    VfsNode* parent;
+    const char* name;
+    if (!resolve_parent(t, newp, new_len, &parent, &name)) return (uint64_t)-1;
+    return vfs_rename_as(&cred, src, parent, name) == PERM_OK ? 0 : (uint64_t)-1;
+}
+
 static uint64_t sys_getuid(void) { return task_current()->uid; }
 static uint64_t sys_getgid(void) { return task_current()->gid; }
 
@@ -1110,6 +1129,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_GETGID:      return sys_getgid();
         case SYS_CHMOD:       return sys_chmod(a1, a2, a3);
         case SYS_GETRANDOM:   return sys_getrandom(a1, a2);
+        case SYS_RENAME:      return sys_rename(a1, a2, a3, a4);
         default:        return (uint64_t)-1; // syscall desconhecida
     }
 }

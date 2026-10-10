@@ -68,6 +68,21 @@ bool      vfs_append(VfsNode* file, const char* data);
 bool      vfs_rm(VfsNode* node);
 bool      vfs_sync(void);
 
+// Nome válido para uma entrada: não vazio, < VFS_NAME_MAX, sem '/', e nunca "." ou "..".
+bool      vfs_name_valid(const char* name);
+
+// Move e/ou renomeia `node` para (new_parent, new_name) — SEM checagem de
+// permissão (use vfs_rename_as, fs/perm.h). Falha se: `node` é a raiz, o
+// destino já existe (não sobrescreve), new_parent não é diretório, ou
+// new_parent está DENTRO de `node` (mover pasta para dentro de si mesma).
+// Renomear para o próprio nome atual é um sucesso sem efeito. Grava no disco.
+bool      vfs_rename(VfsNode* node, VfsNode* new_parent, const char* new_name);
+
+// Copia arquivo ou pasta (recursivo) para (dst_parent, dst_name) e devolve a
+// cópia (NULL em falha; uma cópia parcial é desfeita). Preserva dono e modo —
+// quem copia em nome de um usuário usa vfs_copy_as (fs/perm.h). Uma gravação só.
+VfsNode*  vfs_copy(const VfsNode* src, VfsNode* dst_parent, const char* dst_name);
+
 // Dono e permissões — SEM checagem (quem chama é o kernel; para checar
 // em nome de um usuário use fs/perm.h: vfs_chmod_as / vfs_chown_as).
 // Não grava no disco: chame vfs_sync() (ou feche um lote) depois.

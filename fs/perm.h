@@ -67,6 +67,23 @@ VfsNode* vfs_touch_as(const Cred* cred, VfsNode* parent, const char* name, int* 
 // (W+X) e a regra sticky permitir. Não remove a raiz.
 int  vfs_remove_as(const Cred* cred, VfsNode* node);
 
+// Move/renomeia `node` para (new_parent, new_name). Exige W+X no diretório de
+// ORIGEM (com a regra sticky) e no de DESTINO. Não sobrescreve nada.
+int  vfs_rename_as(const Cred* cred, VfsNode* node, VfsNode* new_parent, const char* new_name);
+
+// Copia `src` (arquivo ou pasta) para (dst_parent, dst_name). Exige R em todo
+// arquivo copiado, R+X em toda pasta copiada e W+X no destino; a cópia
+// (toda a árvore) passa a pertencer a `cred`. Mantém os bits de modo.
+// Em sucesso, *out (se não NULL) recebe a cópia.
+int  vfs_copy_as(const Cred* cred, VfsNode* src, VfsNode* dst_parent,
+                 const char* dst_name, VfsNode** out);
+
+// Separa `path` em "diretório pai (resolvido, exige X no caminho)" + "último
+// nome" (copiado em name_out, que precisa ter VFS_NAME_MAX bytes). Aceita '/'
+// no final. PERM_EINVAL se o nome for inválido ("", ".", "..").
+int  vfs_resolve_parent_as(const Cred* cred, VfsNode* base, const char* path,
+                           VfsNode** parent, char* name_out);
+
 // chmod/chown com checagem + gravação no disco.
 int  vfs_chmod_as(const Cred* cred, VfsNode* node, uint16_t mode);
 int  vfs_chown_as(const Cred* cred, VfsNode* node, uint32_t uid, uint32_t gid);

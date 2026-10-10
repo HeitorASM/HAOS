@@ -145,6 +145,87 @@ int vfs_remove_as(const Cred* cred, VfsNode* node) {
     return vfs_rm(node) ? PERM_OK : PERM_EINVAL;
 }
 
+int vfs_rename_as(const Cred* cred, VfsNode* node, VfsNode* new_parent, const char* new_name) {
+    if (!cred || !node || node->removed) return PERM_ENOENT;
+    if (!node->parent) return PERM_EINVAL;                               // raiz
+    if (!new_parent || new_parent->removed || new_parent->type != VFS_DIR) return PERM_ENOENT;
+    if (!vfs_name_valid(new_name)) return PERM_EINVAL;
+
+    VfsNode* old_parent = node->parent;
+    if (!may_unlink_entry(cred, old_parent, node)) return PERM_EACCES;   // W+X na origem + sticky
+    if (new_parent != old_parent && !perm_allows(new_parent, cred, PERM_W | PERM_X))
+        return PERM_EACCES;                                              // W+X no destino
+
+    VfsNode* existing = vfs_find_child(new_parent, new_name);
+    if (existing && existing != node) return PERM_EINVAL;                // já existe
+    return vfs_rename(node, new_parent, new_name) ? PERM_OK : PERM_EINVAL;
+}
+
+// Toda a árvore pode ser LIDA por `cred`? (R em arquivos, R+X em pastas)
+static bool tree_readable(const Cred* cred, const VfsNode* n) {
+    if (n->removed) return false;
+    if (n->type == VFS_FILE) return perm_allows(n, cred, PERM_R);
+    if (!perm_allows(n, cred, PERM_R | PERM_X)) return false;
+    for (uint32_t i = 0; i < n->child_count; i++)
+        if (!tree_readable(cred, n->children[i])) return false;
+    return true;
+}
+
+int vfs_copy_as(const Cred* cred, VfsNode* src, VfsNode* dst_parent,
+                const char* dst_name, VfsNode** out) {
+    if (out) *out = NULL;
+    if (!cred || !src || src->removed) return PERM_ENOENT;
+    if (!dst_parent || dst_parent->removed || dst_parent->type != VFS_DIR) return PERM_ENOENT;
+    if (!vfs_name_valid(dst_name)) return PERM_EINVAL;
+    if (vfs_find_child(dst_parent, dst_name)) return PERM_EINVAL;
+    if (!perm_allows(dst_parent, cred, PERM_W | PERM_X)) return PERM_EACCES;
+    if (!tree_readable(cred, src)) return PERM_EACCES;
+
+    vfs_batch_begin();                       // copiar + trocar o dono = UMA gravação
+    VfsNode* n = vfs_copy(src, dst_parent, dst_name);
+    if (n) vfs_chown_tree(n, cred->uid, cred->gid);
+    vfs_batch_end();
+    if (!n) return PERM_EINVAL;
+    if (out) *out = n;
+    return PERM_OK;
+}
+
+int vfs_resolve_parent_as(const Cred* cred, VfsNode* base, const char* path,
+                          VfsNode** parent, char* name_out) {
+    if (!cred || !path || !path[0] || !parent || !name_out) return PERM_EINVAL;
+    char buf[256];
+    size_t len = kstrlen(path);
+    if (len >= sizeof(buf)) return PERM_EINVAL;
+    kmemcpy(buf, path, len + 1);
+    while (len > 1 && buf[len - 1] == '/') buf[--len] = '\0';           // tira '/' finais
+
+    int last = -1;
+    for (size_t i = 0; i < len; i++)
+        if (buf[i] == '/') last = (int)i;
+
+    VfsNode* dir = NULL;
+    const char* fname;
+    if (last < 0) {
+        dir = base ? base : vfs_cwd();
+        fname = buf;
+    } else if (last == 0) {
+        dir = vfs_root();
+        fname = buf + 1;
+    } else {
+        buf[last] = '\0';
+        int r = vfs_resolve_as(cred, base, buf, &dir);
+        if (r != PERM_OK) return r;
+        fname = buf + last + 1;
+    }
+    if (!dir || dir->type != VFS_DIR || dir->removed) return PERM_ENOENT;
+    if (!vfs_name_valid(fname)) return PERM_EINVAL;
+
+    kmemset(name_out, 0, VFS_NAME_MAX);
+    kstrncpy(name_out, fname, VFS_NAME_MAX - 1);
+    *parent = dir;
+    return PERM_OK;
+}
+
 int vfs_chmod_as(const Cred* cred, VfsNode* node, uint16_t mode) {
     if (!cred || !node || node->removed) return PERM_ENOENT;
     if (!cred->bypass && cred->uid != node->uid) return PERM_EACCES;

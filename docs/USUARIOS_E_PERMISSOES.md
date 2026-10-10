@@ -106,13 +106,22 @@ bash tests/perm/run.sh     # permissões, contas, migração, passwd corrompido,
 O segundo usa o `vfs.c`, `perm.c`, `user.c` e `sha256.c` **reais** com disco,
 memória e relógio simulados. Compila só esses arquivos, em poucos segundos.
 
+## Mover, renomear e copiar
+
+* **`mv` / `rename()`** exige **W+X** na pasta de origem (com a regra *sticky* de `/tmp`) e **W+X**
+  na pasta de destino. Nunca sobrescreve; recusa mover uma pasta para dentro de si mesma.
+* **`cp`** exige **R** em cada arquivo, **R+X** em cada pasta copiada e **W+X** no destino.
+  A cópia passa a pertencer a quem copiou e mantém os bits de modo (copiar um `0600` continua `0600`).
+* Ambos gravam o disco **uma vez** só (journal do HAOSFS), mesmo copiando uma árvore inteira.
+
 ## Limitações conhecidas
 
 * **Configurações são globais:** tema, idioma e wallpaper ainda ficam em `/etc`
   (compartilhados por todas as contas).
 * **Sem grupos compartilhados** nem ACLs.
 * O **cwd é global** (um por sistema), não por terminal.
-* **Sem limite de tentativas** além do custo do PBKDF2 e de 1 s de espera no login.
-* O salt vem de TSC + PIT + RTC misturados com SHA-256 (não há RNG de hardware):
-  suficiente para salts (não precisam ser secretos), **não** para chaves.
-* O disco ainda é regravado inteiro a cada sync (ver "Robustez" no README).
+* O bloqueio de login é **só em memória** (reiniciar zera): 5 falhas seguidas travam a conta por
+  30 s, dobrando até 15 min.
+* O salt/RNG usa RDSEED/RDRAND quando a CPU tem, mais jitter do TSC, num DRBG de SHA-256
+  (`kernel/random.c`); sem RNG de hardware a entropia é só a de temporização.
+* O sync é **atômico** (journal), mas só ao nível do volume inteiro — não há `fsync` por arquivo.

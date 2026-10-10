@@ -165,6 +165,10 @@ int mkdir(const char* path);
 // Remove um arquivo ou diretório VAZIO. Retorna 0 ou -1.
 int unlink(const char* path);
 
+// Move/renomeia `oldpath` para `newpath` (pasta-pai + nome novo; não sobrescreve e
+// não entra em pasta existente). Retorna 0 ou -1. Exige W+X nas duas pastas.
+int rename(const char* oldpath, const char* newpath);
+
 // Reposiciona o offset de um fd de arquivo (whence: SEEK_SET/CUR/END).
 // Retorna a nova posição (>= 0) ou -1. Não vale para fd 0 (stdin).
 long lseek(int fd, long offset, int whence);

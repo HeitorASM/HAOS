@@ -179,6 +179,8 @@ static void cmd_help(TermState* t) {
     term_println(t, tr(STR_TERM_HELP_WRITE));
     term_println(t, tr(STR_TERM_HELP_APPEND));
     term_println(t, tr(STR_TERM_HELP_RM));
+    term_println(t, tr(STR_TERM_HELP_MV));
+    term_println(t, tr(STR_TERM_HELP_CP));
     term_println(t, tr(STR_TERM_HELP_STAT));
     term_println(t, tr(STR_TERM_HELP_EDIT));
     term_println(t, "");
@@ -782,6 +784,62 @@ static void cmd_rm(TermState* t, const char* name) {
     else                   term_println(t, tr(STR_TERM_RM_NOT_FOUND));
 }
 
+// "a b" -> a, b (separados por espaços; sem aspas). true se os dois vieram.
+static bool split_two_args(const char* args, char* a, size_t asz, char* b, size_t bsz) {
+    a[0] = b[0] = '\0';
+    if (!args) return false;
+    while (*args == ' ') args++;
+    size_t n = 0;
+    while (*args && *args != ' ') { if (n + 1 < asz) a[n++] = *args; args++; }
+    a[n] = '\0';
+    while (*args == ' ') args++;
+    n = 0;
+    while (*args && *args != ' ') { if (n + 1 < bsz) b[n++] = *args; args++; }
+    b[n] = '\0';
+    return a[0] && b[0];
+}
+
+// Resolve o DESTINO de mv/cp: se `dest` é uma pasta existente, o item entra nela
+// com o nome original; senão `dest` é "pasta-pai/nome-novo". PERM_OK em sucesso.
+static int resolve_dest(const Cred* cred, const VfsNode* src, const char* dest,
+                        VfsNode** dir, char* name) {
+    VfsNode* existing = nullptr;
+    int dr = vfs_resolve_as(cred, vfs_cwd(), dest, &existing);
+    if (dr == PERM_OK && existing) {
+        if (existing->type != VFS_DIR) return PERM_EINVAL;      // já existe um arquivo com esse nome
+        *dir = existing;
+        kmemset(name, 0, VFS_NAME_MAX);
+        kstrncpy(name, src->name, VFS_NAME_MAX - 1);
+        return PERM_OK;
+    }
+    if (dr == PERM_EACCES) return PERM_EACCES;
+    return vfs_resolve_parent_as(cred, vfs_cwd(), dest, dir, name);
+}
+
+static void cmd_mv_cp(TermState* t, const char* args, bool copy) {
+    char s[256], d[256];
+    if (!split_two_args(args, s, sizeof(s), d, sizeof(d))) {
+        term_println(t, tr(copy ? STR_TERM_USAGE_CP : STR_TERM_USAGE_MV));
+        return;
+    }
+    Cred cred = session_cred();
+    VfsNode* src = nullptr;
+    int rr = vfs_resolve_as(&cred, vfs_cwd(), s, &src);
+    if (rr == PERM_EACCES) { term_println(t, tr(STR_PERM_DENIED)); return; }
+    if (rr != PERM_OK || !src) { term_println(t, tr(STR_TERM_RM_NOT_FOUND)); return; }
+
+    VfsNode* dir = nullptr;
+    char name[VFS_NAME_MAX];
+    int pr = resolve_dest(&cred, src, d, &dir, name);
+    if (pr == PERM_EACCES) { term_println(t, tr(STR_PERM_DENIED)); return; }
+    if (pr != PERM_OK) { term_println(t, tr(copy ? STR_TERM_CP_FAILED : STR_TERM_MV_FAILED)); return; }
+
+    int r = copy ? vfs_copy_as(&cred, src, dir, name, nullptr)
+                 : vfs_rename_as(&cred, src, dir, name);
+    if (r == PERM_EACCES)    term_println(t, tr(STR_PERM_DENIED));
+    else if (r != PERM_OK)   term_println(t, tr(copy ? STR_TERM_CP_FAILED : STR_TERM_MV_FAILED));
+}
+
 static void cmd_stat(TermState* t, const char* name) {
     if (!name || !name[0]) { term_println(t, tr(STR_TERM_STAT_NEED_NAME)); return; }
     Cred cred = session_cred();
@@ -1172,6 +1230,10 @@ static void term_execute(TermState* t, const char* input) {
         cmd_append(t, args);
     } else if (kstrcmp(cmd, "rm") == 0) {
         cmd_rm(t, args);
+    } else if (kstrcmp(cmd, "mv") == 0) {
+        cmd_mv_cp(t, args, false);
+    } else if (kstrcmp(cmd, "cp") == 0) {
+        cmd_mv_cp(t, args, true);
     } else if (kstrcmp(cmd, "stat") == 0) {
         cmd_stat(t, args);
     } else if (kstrcmp(cmd, "lang") == 0) {
