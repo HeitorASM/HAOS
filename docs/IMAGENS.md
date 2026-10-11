@@ -21,12 +21,31 @@ processo é 32 MiB). JPEG ainda não existe.
 
 ## Uso
 `f` ajusta à janela · `1` 100% · `+`/`-` ou roda do mouse: zoom · setas ou arrastar: mover ·
-`PgDn`/`.` próxima imagem da pasta · `PgUp`/`,` anterior · `q` sai.
+`PgDn`/`.` próxima imagem da pasta · `PgUp`/`,` anterior · `w` papel de parede · `q` sai.
 
-## Limite importante: 1 MB por arquivo
-O VFS limita cada arquivo a **1 MB** (`VFS_FILE_MAX`). Fotos grandes não cabem; ícones,
-capturas de tela e BMPs até ~540×540 (24 bits) cabem. Aumentar esse limite é um passo à parte
-(a heap do kernel e o journal de 4 MiB também entram na conta).
+## Papel de parede
+* No visualizador, a tecla **`w`** define a imagem aberta como papel de parede.
+* No Explorador, botão direito numa imagem → **Definir como papel de parede**
+  (roda `imgview --wallpaper <arquivo>`, sem janela).
+* O visualizador reduz a imagem (média da área) para caber em **1024×768** mantendo a
+  proporção, compõe a transparência sobre preto e chama o syscall `SYS_SET_WALLPAPER`
+  (`gfx_set_wallpaper()` na libc). O kernel guarda o resultado em
+  `/etc/haos.wallpaper.img` (RGB cru, ≈ 2,3 MB no máximo) e volta com ele no próximo boot —
+  inclusive na tela de login.
+* No modo **Preencher** a imagem é escalada **sem distorcer** (cobre a tela e corta o excesso,
+  centralizado); **Centralizar** e **Lado a lado** usam o tamanho real.
+* Menu de contexto do desktop → *Papel de parede ▸ Imagem personalizada* volta a usá-la depois
+  de escolher outro. É uma configuração **global** (como o resto das Configurações).
+
+## Tamanho de arquivo
+O limite do VFS é **4 MB por arquivo** (`VFS_FILE_MAX`, antes 1 MB). Um sync que mude mais de
+~4 MB de uma vez não cabe no journal e cai no modo não atômico (veja ARMAZENAMENTO.md).
+Ainda não existe jeito de trazer imagens de fora para o OS — só as de exemplo e as que você criar aqui.
+
+## Ícones no Explorador
+O Explorador mostra um ícone por tipo (pasta, programa, imagem, texto), desenhado por código.
+**Miniaturas** de imagem exigiriam um decodificador no kernel/GUI (hoje ele só existe dentro do
+visualizador) e ficam para depois.
 
 ## Imagens de exemplo
 `/share/images/` recebe, a cada boot, cinco arquivos de exemplo (`gradiente.png`, `circulo.png`,

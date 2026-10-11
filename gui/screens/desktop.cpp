@@ -117,6 +117,7 @@ enum {
     CTX_SETTINGS,
     CTX_ABOUT,
     CTX_WALLPAPER_DEFAULT = 50,
+    CTX_WALLPAPER_CUSTOM  = 51,
     CTX_WALLPAPER_BASE    = 100,   // + índice do wallpaper
     CTX_THEME_BASE        = 200    // + preset do tema
 };
@@ -150,6 +151,9 @@ static void desktop_menu_activate(int id, void*) {
             case CTX_WALLPAPER_DEFAULT:
                 wallpaper_set(-1);
                 break;
+            case CTX_WALLPAPER_CUSTOM:
+                wallpaper_use_custom();
+                break;
             default:
                 break;
         }
@@ -170,13 +174,18 @@ static void desktop_open_context_menu(int32_t x, int32_t y) {
 
     Menu* wp = menu_add_submenu(m, tr(STR_CTX_WALLPAPER));
     if (wp) {
-        int cur = wallpaper_get();
+        bool custom = wallpaper_is_custom();
+        int cur = custom ? -2 : wallpaper_get();
         menu_add(wp, tr(STR_CONFIG_DEFAULT_WALLPAPER), CTX_WALLPAPER_DEFAULT,
-                 cur < 0 ? MENU_FLAG_CHECKED : 0);
+                 cur == -1 ? MENU_FLAG_CHECKED : 0);
         int n = wallpaper_count();
-        for (int i = 0; i < n && wp->count < MENU_MAX_ITEMS; i++)
+        for (int i = 0; i < n && wp->count < MENU_MAX_ITEMS - 1; i++)
             menu_add(wp, wallpaper_name(i), CTX_WALLPAPER_BASE + i,
                      i == cur ? MENU_FLAG_CHECKED : 0);
+        // A imagem do usuário (definida pelo visualizador / Explorador) — sempre
+        // listada; clicar volta a usá-la se estava desligada.
+        menu_add(wp, tr(STR_CTX_WALLPAPER_CUSTOM), CTX_WALLPAPER_CUSTOM,
+                 custom ? MENU_FLAG_CHECKED : 0);
     }
 
     Menu* th = menu_add_submenu(m, tr(STR_CTX_THEME));

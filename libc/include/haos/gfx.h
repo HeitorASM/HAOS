@@ -86,6 +86,13 @@ int win_text_bg(int win, int x, int y, const char* s, uint32_t fg, uint32_t bg);
 // Copia um bloco w*h de pixels 0xRRGGBB (linhas contíguas) para (x, y).
 int win_blit(int win, int x, int y, int w, int h, const uint32_t* pixels);
 
+// ---- Papel de parede ----
+
+// Define o papel de parede do desktop com w*h pixels 0xRRGGBB (linhas contíguas),
+// w <= 1024 e h <= 768 (reduza antes, mantendo a proporção). É uma configuração
+// GLOBAL: fica salva e volta no próximo boot. Retorna 0 ou -1.
+int gfx_set_wallpaper(const uint32_t* pixels, int w, int h);
+
 // ---- Eventos ----
 
 // Retorna 1 (evento em *ev), 0 (nenhum evento / tempo esgotado) ou -1 (a

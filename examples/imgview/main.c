@@ -6,7 +6,11 @@
 //   f        ajusta a imagem à janela          1        tamanho real (100%)
 //   + / -    zoom (a roda do mouse também)     setas    move a imagem
 //   arrastar com o mouse move a imagem         PgDn / . próxima imagem da pasta
-//   PgUp / , imagem anterior                   q        sair
+//   PgUp / , imagem anterior                   w        usar como papel de parede
+//   q        sair
+//
+//   imgview --wallpaper <arquivo>   (sem janela) define a imagem como papel de
+//                                   parede e termina — usado pelo Explorador.
 //
 // O decodificador mora em imgdec.h (inflate + PNG + BMP); imagens com
 // transparência aparecem sobre um xadrez.
@@ -36,6 +40,7 @@ static char     g_err[96];
 static char     g_dir[256];
 static char     g_names[MAX_NAMES][HAOS_NAME_MAX];
 static int      g_nnames, g_cur;
+static char     g_note[72];                   // aviso na barra de status (some na próxima tecla)
 static int      zoom = 1000;                  // 1000 = 100%
 static int      fit  = 1;
 static int      ox, oy;                       // canto da imagem na área de desenho
@@ -172,9 +177,11 @@ static void set_zoom(int nz) {
 static void draw_status(void) {
     win_fill_rect(win, 0, view_h(), (int)cw, STATUS_H, BAR_BG);
     char line[200];
-    if (have_img) {
+    if (g_note[0]) {
+        win_text_bg(win, 6, view_h() + 2, g_note, 0xFFE070, BAR_BG);
+    } else if (have_img) {
         const char* name = g_nnames ? g_names[g_cur] : "";
-        snprintf(line, sizeof(line), "%s  %dx%d  %d%%  [%d/%d]   f:ajustar 1:100%% +/-:zoom PgUp/PgDn:imagens q:sair",
+        snprintf(line, sizeof(line), "%s  %dx%d  %d%%  [%d/%d]   f:ajustar 1:100%% +/-:zoom w:fundo PgUp/PgDn q:sair",
                  name, img.w, img.h, zoom / 10, g_nnames ? g_cur + 1 : 1, g_nnames ? g_nnames : 1);
         win_text_bg(win, 6, view_h() + 2, line, BAR_FG, BAR_BG);
     } else {
@@ -240,6 +247,49 @@ static void render(void) {
     draw_status();
 }
 
+// ---------- papel de parede ----------
+// Reduz (média da área) para caber em 1024x768 mantendo a proporção, compõe a
+// transparência sobre preto e entrega ao kernel (gfx_set_wallpaper).
+static int set_wallpaper_from(const Img* im) {
+    int tw = im->w, th = im->h;
+    if (tw > 1024 || th > 768) {
+        if ((long)tw * 768 > (long)th * 1024) { th = (int)((long)th * 1024 / tw); tw = 1024; }
+        else                                  { tw = (int)((long)tw * 768 / th);  th = 768; }
+    }
+    if (tw < 1) tw = 1;
+    if (th < 1) th = 1;
+    uint32_t* out = (uint32_t*)malloc((size_t)tw * (size_t)th * 4);
+    if (!out) return -1;
+    for (int y = 0; y < th; y++) {
+        int sy0 = (int)((long)y * im->h / th), sy1 = (int)((long)(y + 1) * im->h / th);
+        if (sy1 <= sy0) sy1 = sy0 + 1;
+        for (int x = 0; x < tw; x++) {
+            int sx0 = (int)((long)x * im->w / tw), sx1 = (int)((long)(x + 1) * im->w / tw);
+            if (sx1 <= sx0) sx1 = sx0 + 1;
+            unsigned long r = 0, g = 0, b = 0, n = 0;
+            for (int sy = sy0; sy < sy1 && sy < im->h; sy++)
+                for (int sx = sx0; sx < sx1 && sx < im->w; sx++) {
+                    uint32_t p = im->px[(size_t)sy * (size_t)im->w + (size_t)sx];
+                    uint32_t a = p >> 24;
+                    r += ((p >> 16) & 255) * a / 255;       // alfa sobre preto
+                    g += ((p >> 8) & 255) * a / 255;
+                    b += (p & 255) * a / 255;
+                    n++;
+                }
+            if (n == 0) n = 1;
+            out[(size_t)y * (size_t)tw + (size_t)x] = (uint32_t)((r / n) << 16 | (g / n) << 8 | (b / n));
+        }
+    }
+    int rc = gfx_set_wallpaper(out, tw, th);
+    free(out);
+    return rc;
+}
+
+static void note(const char* msg) {
+    strncpy(g_note, msg, sizeof(g_note) - 1);
+    g_note[sizeof(g_note) - 1] = 0;
+}
+
 // ---------- troca de imagem ----------
 static void open_sibling(int delta) {
     if (g_nnames < 2) return;
@@ -265,7 +315,16 @@ static int handle(const struct haos_win_event* ev, int* dirty) {
     switch (ev->type) {
         case HAOS_EV_KEY: {
             int k = ev->a;
+            if (g_note[0]) { g_note[0] = 0; *dirty = 1; }
             if (k == 'q' || k == 'Q') return 1;
+            if ((k == 'w' || k == 'W') && have_img) {
+                note("Definindo papel de parede...");
+                render();                                    // mostra o aviso já (salvar demora um pouco)
+                note(set_wallpaper_from(&img) == 0 ? "Papel de parede definido."
+                                                    : "Nao foi possivel definir o papel de parede.");
+                *dirty = 1;
+                break;
+            }
             if (k == '+' || k == '=') { set_zoom(zoom_up(zoom)); *dirty = 1; }
             else if (k == '-' || k == '_') { set_zoom(zoom_down(zoom)); *dirty = 1; }
             else if (k == 'f' || k == 'F') { fit = 1; compute_fit(); clamp_pan(); *dirty = 1; }
@@ -305,6 +364,15 @@ static int handle(const struct haos_win_event* ev, int* dirty) {
 
 int main(int argc, char** argv) {
     g_err[0] = 0;
+
+    // Modo sem janela: imgview --wallpaper <arquivo>
+    if (argc >= 3 && argv[1] && strcmp(argv[1], "--wallpaper") == 0) {
+        if (load_image(argv[2]) != 0) return 1;
+        int rc = set_wallpaper_from(&img);
+        img_free(&img);
+        return rc == 0 ? 0 : 1;
+    }
+
     if (argc >= 2 && argv[1] && argv[1][0]) {
         list_siblings(argv[1]);
         load_image(argv[1]);

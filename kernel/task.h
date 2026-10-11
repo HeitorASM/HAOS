@@ -230,8 +230,8 @@ typedef struct task {
                                                        // syscall.c. Os 31
                                                        // bits baixos são o
                                                        // offset de verdade
-                                                       // (VFS_FILE_MAX é 1
-                                                       // MB, cabe folgado).
+                                                       // (VFS_FILE_MAX é 4
+                                                       // MB, cabe folgado em 31 bits).
 
     // ---- Diretório de trabalho (cwd) por processo ----
     // Base para resolver caminhos RELATIVOS em sys_open/sys_stat/

@@ -48,7 +48,7 @@ static bool s_clip_cut = false;
 // IDs do menu de contexto
 enum {
     M_OPEN = 1, M_COPY, M_CUT, M_PASTE, M_RENAME, M_DELETE, M_PROPS,
-    M_NEW_DIR, M_NEW_FILE
+    M_NEW_DIR, M_NEW_FILE, M_WALLPAPER
 };
 
 enum class Mode : uint8_t { Normal, Rename, ConfirmDelete };
@@ -75,6 +75,35 @@ static const char* assoc_for(const char* name) {
         if (same) return a.program;
     }
     return nullptr;
+}
+
+// Ícone 16x16 por tipo de arquivo, desenhado com retângulos (sem imagens embutidas).
+static void draw_file_icon(int32_t x, int32_t y, const VfsNode* n) {
+    uint32_t ux = (uint32_t)x, uy = (uint32_t)y;
+    if (n->type == VFS_DIR) {                                   // pasta
+        fb_fill_rect(ux, uy + 3, 7, 3, 0xD9A93A);
+        fb_fill_rect(ux, uy + 5, 16, 10, 0xF2C84B);
+        fb_fill_rect(ux, uy + 13, 16, 2, 0xD9A93A);
+    } else if (file_manager_is_executable(n)) {                 // programa
+        fb_fill_rect(ux + 1, uy + 1, 14, 14, 0x2E9E4E);
+        fb_fill_rect(ux + 5, uy + 4, 2, 2, 0xFFFFFF);           // ">"
+        fb_fill_rect(ux + 7, uy + 6, 2, 2, 0xFFFFFF);
+        fb_fill_rect(ux + 9, uy + 8, 2, 2, 0xFFFFFF);
+        fb_fill_rect(ux + 7, uy + 10, 2, 2, 0xFFFFFF);
+        fb_fill_rect(ux + 5, uy + 12, 2, 2, 0xFFFFFF);
+    } else if (assoc_for(n->name)) {                            // imagem
+        fb_fill_rect(ux + 1, uy + 2, 14, 12, 0x3A78C2);
+        fb_fill_rect(ux + 2, uy + 3, 12, 10, 0x7FB6F0);
+        fb_fill_rect(ux + 10, uy + 4, 3, 3, 0xFFE070);          // sol
+        fb_fill_rect(ux + 3, uy + 10, 10, 3, 0x3E9B52);         // montanha
+        fb_fill_rect(ux + 5, uy + 8, 6, 2, 0x3E9B52);
+        fb_fill_rect(ux + 7, uy + 7, 2, 1, 0x3E9B52);
+    } else {                                                    // texto / outro
+        fb_fill_rect(ux + 3, uy + 1, 10, 14, 0xE8E8F0);
+        fb_fill_rect(ux + 5, uy + 5, 6, 1, 0x7A7F90);
+        fb_fill_rect(ux + 5, uy + 8, 6, 1, 0x7A7F90);
+        fb_fill_rect(ux + 5, uy + 11, 4, 1, 0x7A7F90);
+    }
 }
 
 static bool window_alive(Window* w) {
@@ -337,7 +366,7 @@ public:
 
         fb_fill_rect((uint32_t)left, (uint32_t)header_top, (uint32_t)width,
                  HEADER_H, 0x1B3554);
-        fb_draw_string((uint32_t)(left + 8), (uint32_t)(header_top + 3),
+        fb_draw_string((uint32_t)(left + 30), (uint32_t)(header_top + 3),
                    tr(STR_FILE_MANAGER_NAME), COLOR_TEXT_LIGHT, 0, true);
         fb_draw_string((uint32_t)(left + width - 160),
                    (uint32_t)(header_top + 3),
@@ -366,23 +395,24 @@ public:
                 // programa em vez de abrir no editor de texto.
                 name_color = COLOR_GREEN;
             }
+            draw_file_icon(left + 8, row_y + 4, child);
             fb_draw_string((uint32_t)(left + width - 160),
                            (uint32_t)(row_y + 5), marker, marker_color, 0, true);
 
             if (mode == Mode::Rename && child == edit_node) {
                 // Caixa de edição no lugar do nome
-                fb_fill_rect((uint32_t)(left + 4), (uint32_t)(row_y + 1),
-                             (uint32_t)(width - 180), ROW_H - 4, 0x0C1A2E);
-                fb_fill_rect((uint32_t)(left + 4), (uint32_t)(row_y + ROW_H - 4),
-                             (uint32_t)(width - 180), 1, COLOR_ACCENT);
-                fb_draw_string((uint32_t)(left + 8), (uint32_t)(row_y + 5),
+                fb_fill_rect((uint32_t)(left + 26), (uint32_t)(row_y + 1),
+                             (uint32_t)(width - 206), ROW_H - 4, 0x0C1A2E);
+                fb_fill_rect((uint32_t)(left + 26), (uint32_t)(row_y + ROW_H - 4),
+                             (uint32_t)(width - 206), 1, COLOR_ACCENT);
+                fb_draw_string((uint32_t)(left + 30), (uint32_t)(row_y + 5),
                                edit_buf, COLOR_TEXT_LIGHT, 0, true);
                 if ((timer_ticks / 50) % 2 == 0) {
-                    uint32_t cx = (uint32_t)(left + 8) + fb_text_width(edit_buf);
+                    uint32_t cx = (uint32_t)(left + 30) + fb_text_width(edit_buf);
                     fb_fill_rect(cx, (uint32_t)(row_y + 4), 2, FONT_H + 2, COLOR_TEXT_LIGHT);
                 }
             } else {
-                fb_draw_string((uint32_t)(left + 8), (uint32_t)(row_y + 5),
+                fb_draw_string((uint32_t)(left + 30), (uint32_t)(row_y + 5),
                                child->name, name_color, 0, true);
             }
 
@@ -600,6 +630,15 @@ public:
             case M_DELETE:   begin_delete(selected); break;
             case M_NEW_DIR:  do_new(true); break;
             case M_NEW_FILE: do_new(false); break;
+            case M_WALLPAPER: {
+                if (!selected) break;
+                const char* prog = assoc_for(selected->name);
+                if (!prog) break;
+                char ipath[512];
+                file_manager_path(selected, ipath, sizeof(ipath));
+                set_status(tr(app_launch(prog, "--wallpaper", ipath) ? STR_FM_SETTING_WP : STR_FM_NO_VIEWER));
+                break;
+            }
             case M_PROPS:
                 show_properties(selected ? selected : current_dir,
                                 bounds.x + 60, bounds.y + 60);
@@ -622,6 +661,8 @@ public:
         uint8_t paste_flag = s_clip_valid ? 0 : MENU_FLAG_DISABLED;
         if (node) {
             menu_add(m, tr(STR_FM_OPEN), M_OPEN);
+            if (node->type == VFS_FILE && assoc_for(node->name))
+                menu_add(m, tr(STR_FM_SET_WALLPAPER), M_WALLPAPER);
             menu_add_separator(m);
             menu_add(m, tr(STR_FM_COPY), M_COPY, 0, "Ctrl+C");
             menu_add(m, tr(STR_FM_CUT),  M_CUT,  0, "Ctrl+X");

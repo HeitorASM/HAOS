@@ -172,7 +172,8 @@ extern "C" {
                             // mode = 0..01777 (rwxrwxrwx + sticky).
 #define SYS_GETRANDOM 30 // sys_getrandom(void* buf, uint64_t len) -> len ou -1. len <= 256.
 #define SYS_RENAME    31 // sys_rename(old, old_len, new, new_len) -> 0 ou -1. Move/renomeia; não sobrescreve.
-#define SYS_COUNT     32
+#define SYS_SET_WALLPAPER 32 // sys_set_wallpaper(pixels, w, h) -> 0 ou -1. 0x00RRGGBB, w<=1024, h<=768. Global.
+#define SYS_COUNT     33
 
 // ---- whence de sys_lseek ----
 #define SEEK_SET  0

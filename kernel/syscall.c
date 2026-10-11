@@ -28,6 +28,7 @@
 #include "../fs/perm.h"
 #include "user.h"
 #include "../gui/core/userwin.h"
+#include "../gui/wallpaper.h"
 
 extern void syscall_entry(void); // definido em syscall_asm.asm
 extern volatile uint64_t timer_ticks; // idt_asm.asm — incrementado a 100 Hz (IRQ0)
@@ -454,7 +455,7 @@ static uint64_t sys_write_fd(uint64_t fd, uint64_t user_buf_ptr, uint64_t count)
     uint64_t offset = t->fd_offset[fd] & FD_OFFSET_MASK;
 
     // Checa overflow/limite ANTES de alocar: offset+count precisa
-    // caber em VFS_FILE_MAX (1 MB) e em uint32_t.
+    // caber em VFS_FILE_MAX (4 MB) e em uint32_t.
     if (offset > VFS_FILE_MAX || count > VFS_FILE_MAX - offset) return (uint64_t)-1;
     uint32_t end = (uint32_t)(offset + count);
 
@@ -931,6 +932,17 @@ static uint64_t sys_rename(uint64_t old_ptr, uint64_t old_len, uint64_t new_ptr,
     return vfs_rename_as(&cred, src, parent, name) == PERM_OK ? 0 : (uint64_t)-1;
 }
 
+// Define o papel de parede a partir de pixels do chamador (0x00RRGGBB). O
+// wallpaper é uma configuração GLOBAL do sistema (como no app de Configurações):
+// qualquer usuário logado pode trocá-lo.
+static uint64_t sys_set_wallpaper(uint64_t pixels_ptr, uint64_t w, uint64_t h) {
+    if (w == 0 || h == 0 || w > 1024 || h > 768) return (uint64_t)-1;
+    uint64_t bytes = w * h * 4u;
+    if (!validate_user_range(pixels_ptr, bytes)) return (uint64_t)-1;
+    return wallpaper_set_custom((const uint32_t*)pixels_ptr, (uint32_t)w, (uint32_t)h)
+           ? 0 : (uint64_t)-1;
+}
+
 static uint64_t sys_getuid(void) { return task_current()->uid; }
 static uint64_t sys_getgid(void) { return task_current()->gid; }
 
@@ -1130,6 +1142,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_CHMOD:       return sys_chmod(a1, a2, a3);
         case SYS_GETRANDOM:   return sys_getrandom(a1, a2);
         case SYS_RENAME:      return sys_rename(a1, a2, a3, a4);
+        case SYS_SET_WALLPAPER: return sys_set_wallpaper(a1, a2, a3);
         default:        return (uint64_t)-1; // syscall desconhecida
     }
 }

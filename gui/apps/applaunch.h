@@ -6,7 +6,8 @@
 // descartada — programas daqui devem mostrar tudo numa janela própria.
 //
 //   app_launch("/bin/imgview.hexec", "/home/ana/foto.png");
+//   app_launch("/bin/imgview.hexec", "--wallpaper", "/home/ana/foto.png");
 //
-// `arg1` pode ser nullptr. Devolve true se o processo foi criado (o programa
+// `arg1` e `arg2` podem ser nullptr. Devolve true se o processo foi criado (o programa
 // ainda precisa conseguir abrir a janela dele).
-bool app_launch(const char* hexec_path, const char* arg1);
+bool app_launch(const char* hexec_path, const char* arg1, const char* arg2 = nullptr);

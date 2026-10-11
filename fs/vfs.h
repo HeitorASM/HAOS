@@ -4,7 +4,7 @@
 // ---- Limites ------------------------------------------------
 #define VFS_NAME_MAX     64
 #define VFS_FILE_INITIAL 256       // capacidade inicial alocada por arquivo (bytes)
-#define VFS_FILE_MAX     (1024 * 1024)   // 1 MB máx por arquivo (cresce dinamicamente)
+#define VFS_FILE_MAX     (4 * 1024 * 1024)   // 4 MB máx por arquivo (cresce dinamicamente)
 #define VFS_MAX_CHILDREN 128       // máx filhos por diretório
 
 // ---- Permissões (estilo Unix) -------------------------------

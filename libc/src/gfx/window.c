@@ -57,6 +57,11 @@ int win_blit(int win, int x, int y, int w, int h, const uint32_t* pixels) {
     return (int)haos_syscall(SYS_WIN_BLIT, win, (long)&b, 0, 0, 0);
 }
 
+int gfx_set_wallpaper(const uint32_t* pixels, int w, int h) {
+    if (!pixels || w <= 0 || h <= 0) return -1;
+    return (int)haos_syscall(SYS_SET_WALLPAPER, (long)pixels, (long)w, (long)h, 0, 0);
+}
+
 int win_event(int win, struct haos_win_event* ev, unsigned timeout_ms) {
     if (!ev) return -1;
     return (int)haos_syscall(SYS_WIN_EVENT, win, (long)ev, (long)timeout_ms, 0, 0);
