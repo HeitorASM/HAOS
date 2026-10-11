@@ -1,5 +1,6 @@
 #pragma once
 #include "../../kernel/types.h"
+#include "theme_abi.h"      // theme_generation / theme_export_abi (ABI para syscalls e apps)
 
 
 struct Theme {

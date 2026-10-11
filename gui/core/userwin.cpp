@@ -44,6 +44,7 @@
 #include "../../drivers/fb.h"
 #include "../../drivers/font.h"
 #include "../../kernel/memory.h"
+#include "theme.h"
 
 // Definido em kernel/task.c (C). Declarado aqui para não incluir
 // task.h (e seu TASK_LAYOUT_GUARD) numa unidade C++ que não precisa
@@ -417,7 +418,28 @@ extern "C" int userwin_info(uint64_t owner, int64_t handle, haos_win_info_t* out
     return 0;
 }
 
+extern "C" int userwin_set_title(uint64_t owner, int64_t handle, const char* title, uint32_t len) {
+    UserWindow* w = lookup(owner, handle);
+    if (!w || !title) return -1;
+    if (len > sizeof(w->title) - 1) len = sizeof(w->title) - 1;
+    IrqOff off;                                   // a GUI pode estar desenhando o título agora
+    uint32_t i = 0;
+    for (; i < len && title[i]; i++) w->title[i] = title[i];
+    w->title[i] = '\0';
+    return 0;
+}
+
 extern "C" void userwin_reap(void) {
+    // Tema mudou? Avisa todas as janelas de usuário (HAOS_EV_THEME).
+    static uint32_t last_theme = 0;
+    uint32_t tg = theme_generation();
+    if (last_theme == 0) last_theme = tg;          // primeira passada: só memoriza
+    else if (tg != last_theme) {
+        last_theme = tg;
+        for (int i = 0; i < (int)USERWIN_MAX; i++)
+            if (s_win[i]) s_win[i]->push_event(HAOS_EV_THEME, 0, 0, 0);
+    }
+
     for (int i = 0; i < (int)USERWIN_MAX; i++) {
         UserWindow* w = s_win[i];
         if (!w) continue;

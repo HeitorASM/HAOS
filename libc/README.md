@@ -118,3 +118,7 @@ usuário. Essa fronteira existe mesmo parecendo redundante agora,
 porque deixa claro, desde já, o que é código de kernel e o que é
 código de aplicação — importante à medida que mais syscalls e mais
 programas forem adicionados.
+
+## Desenho e tema para apps (resumo)
+
+Veja `haos/draw.h` (canvas por software: `cv_*`), `haos/uitheme.h` (tema do sistema), e em `haos/gfx.h`: `win_set_title()`, `clip_get()/clip_set()`, `gfx_font_data()`, `gfx_theme_get()` e o evento `HAOS_EV_THEME`. Detalhes e roteiro do toolkit em [docs/UI.md](../docs/UI.md).

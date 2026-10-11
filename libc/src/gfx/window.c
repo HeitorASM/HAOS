@@ -57,6 +57,29 @@ int win_blit(int win, int x, int y, int w, int h, const uint32_t* pixels) {
     return (int)haos_syscall(SYS_WIN_BLIT, win, (long)&b, 0, 0, 0);
 }
 
+int win_set_title(int win, const char* title) {
+    if (!title) return -1;
+    return (int)haos_syscall(SYS_WIN_SET_TITLE, win, (long)title, (long)strlen(title), 0, 0);
+}
+
+long clip_get(char* buf, unsigned long cap) {
+    return (long)haos_syscall(SYS_CLIPBOARD, 0, (long)buf, (long)cap, 0, 0);
+}
+
+int clip_set(const char* data, unsigned long len) {
+    return (int)haos_syscall(SYS_CLIPBOARD, 1, (long)data, (long)len, 0, 0);
+}
+
+int gfx_font_data(uint8_t* out) {
+    if (!out) return -1;
+    return (int)haos_syscall(SYS_FONT_DATA, (long)out, 4096, 0, 0, 0);
+}
+
+int gfx_theme_get(uint32_t* out, unsigned count) {
+    if (!out || count == 0) return -1;
+    return (int)haos_syscall(SYS_THEME_GET, (long)out, (long)count, 0, 0, 0);
+}
+
 int gfx_set_wallpaper(const uint32_t* pixels, int w, int h) {
     if (!pixels || w <= 0 || h <= 0) return -1;
     return (int)haos_syscall(SYS_SET_WALLPAPER, (long)pixels, (long)w, (long)h, 0, 0);

@@ -74,6 +74,7 @@ C_SRCS   = kernel/kernel.c        \
            kernel/sha256.c        \
            kernel/random.c        \
            kernel/acpi.c          \
+           kernel/clipboard.c     \
            kernel/power.c         \
            kernel/user.c          \
            drivers/fb.c           \

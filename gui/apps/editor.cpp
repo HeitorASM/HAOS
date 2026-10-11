@@ -1,3 +1,4 @@
+#include "../../kernel/clipboard.h"
 #include "editor.h"
 #include "../core/wm.h"
 #include "../../drivers/fb.h"
@@ -276,6 +277,7 @@ static void editor_copy_selection(EditorState* e) {
     }
     e->clipboard[pos] = 0;
     e->clipboard_has_data = true;
+    clipboard_set(e->clipboard, pos);     // compartilha com os outros programas
 }
 
 static void editor_cut_selection(EditorState* e) {
@@ -299,6 +301,13 @@ static void editor_cut_selection(EditorState* e) {
 }
 
 static void editor_paste_clipboard(EditorState* e) {
+    // O clipboard do sistema manda (pode ter vindo de outro programa).
+    if (clipboard_len() > 0) {
+        uint32_t n = clipboard_get(e->clipboard, CLIPBOARD_MAX - 1);
+        if (n > CLIPBOARD_MAX - 1) n = CLIPBOARD_MAX - 1;
+        e->clipboard[n] = 0;
+        e->clipboard_has_data = true;
+    }
     if (!e->clipboard_has_data) return;
     if (editor_sel_nonempty(e)) editor_sel_delete(e);
     else editor_sel_clear(e);

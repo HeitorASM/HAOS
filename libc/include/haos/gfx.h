@@ -38,6 +38,7 @@ extern "C" {
 #define HAOS_EV_MOUSE_UP     3
 #define HAOS_EV_MOUSE_MOVE   4   // a,b = x,y; c = 1 se com o botão pressionado
 #define HAOS_EV_MOUSE_SCROLL 5   // a,b = x,y; c = quantidade (> 0 = para cima)
+#define HAOS_EV_THEME        7   // o tema do sistema mudou: ui_theme_load() + redesenhe
 #define HAOS_EV_RESIZE       6   // a,b = nova largura/altura da área cliente;
                                  // o canvas foi recriado (o que cabia foi
                                  // preservado) — redesenhe o que for necessário
@@ -85,6 +86,25 @@ int win_text_bg(int win, int x, int y, const char* s, uint32_t fg, uint32_t bg);
 
 // Copia um bloco w*h de pixels 0xRRGGBB (linhas contíguas) para (x, y).
 int win_blit(int win, int x, int y, int w, int h, const uint32_t* pixels);
+
+// ---- Título, área de transferência, fonte e tema ----
+
+// Muda o título da janela (até 63 caracteres). 0 ou -1.
+int win_set_title(int win, const char* title);
+
+// Área de transferência de TEXTO do sistema (compartilhada com o Editor).
+// clip_get copia até `cap` bytes e devolve o tamanho TOTAL guardado (sem NUL);
+// clip_get(NULL, 0) só consulta o tamanho. clip_set substitui (até 64 KiB; len 0 limpa).
+long clip_get(char* buf, unsigned long cap);
+int  clip_set(const char* data, unsigned long len);
+
+// Tabela de glifos do kernel (256 x 16 bytes, 8x16, CP437, bit 7 = pixel mais à esquerda).
+// `out` precisa de 4096 bytes. Devolve 4096 ou -1. (haos/draw.h já usa isto.)
+int  gfx_font_data(uint8_t* out);
+
+// Cores/métricas do tema do sistema (veja haos/uitheme.h). Escreve `count` uint32_t e
+// devolve quantas entradas o kernel conhece, ou -1.
+int  gfx_theme_get(uint32_t* out, unsigned count);
 
 // ---- Papel de parede ----
 

@@ -25,6 +25,7 @@
 #define HAOS_EV_MOUSE_SCROLL 5   // a,b = x,y; c = quantidade (> 0 = para cima)
 #define HAOS_EV_RESIZE       6   // a,b = nova largura/altura da área cliente
                                  //   (o canvas foi recriado: redesenhe tudo)
+#define HAOS_EV_THEME        7   // o tema do sistema mudou: releia (gfx_theme_get) e redesenhe
 
 // haos_win_text_t::flags
 #define HAOS_TEXT_OPAQUE     1   // pinta o fundo de cada caractere com `bg`
@@ -81,6 +82,7 @@ int     userwin_blit(uint64_t owner, int64_t handle, int32_t x, int32_t y,
                      int32_t w, int32_t h, const uint32_t* pixels);
 int     userwin_poll(uint64_t owner, int64_t handle, haos_win_event_t* out);
 int     userwin_info(uint64_t owner, int64_t handle, haos_win_info_t* out);
+int     userwin_set_title(uint64_t owner, int64_t handle, const char* title, uint32_t len);
 
 // Chamada pela task da GUI a cada frame (run_desktop): fecha as janelas
 // cujo processo morreu ou pediu SYS_WIN_DESTROY. É AQUI (e não dentro

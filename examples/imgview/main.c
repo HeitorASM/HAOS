@@ -290,6 +290,14 @@ static void note(const char* msg) {
     g_note[sizeof(g_note) - 1] = 0;
 }
 
+// ---------- título da janela ----------
+static void update_title(void) {
+    if (!have_img || !g_nnames) return;
+    char t[64];
+    snprintf(t, sizeof(t), "%s - Visualizador", g_names[g_cur]);
+    win_set_title(win, t);
+}
+
 // ---------- troca de imagem ----------
 static void open_sibling(int delta) {
     if (g_nnames < 2) return;
@@ -302,6 +310,7 @@ static void open_sibling(int delta) {
     load_image(path);                    // em caso de erro, have_img = 0 e a mensagem aparece
     compute_fit();
     clamp_pan();
+    update_title();
 }
 
 // ---------- eventos ----------
@@ -387,6 +396,7 @@ int main(int argc, char** argv) {
     win = win_create(want_w, want_h, "Visualizador de imagens");
     if (win < 0) return 1;
     win_size(win, &cw, &ch);
+    update_title();
     compute_fit();
     clamp_pan();
     render();

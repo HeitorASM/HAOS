@@ -554,6 +554,55 @@ const Theme* theme_current(void) {
     return &s_working;
 }
 
+uint32_t theme_generation(void) {
+    const uint8_t* p = (const uint8_t*)theme_current();
+    uint32_t h = 2166136261u;                         // FNV-1a sobre o struct inteiro
+    for (size_t i = 0; i < sizeof(Theme); i++) { h ^= p[i]; h *= 16777619u; }
+    return h ? h : 1u;
+}
+
+uint32_t theme_export_abi(uint32_t* out, uint32_t cap) {
+    const Theme* t = theme_current();
+    const uint32_t v[THEME_ABI_COUNT] = {
+        theme_generation(),                 // 0  UI_THEME_GENERATION
+        t->window_bg,                       // 1  WINDOW_BG
+        t->panel_bg,                        // 2  PANEL_BG
+        t->panel_border,                    // 3  PANEL_BORDER
+        t->text_primary,                    // 4  TEXT
+        t->text_secondary,                  // 5  TEXT_SECONDARY
+        t->text_dim,                        // 6  TEXT_DIM
+        t->accent,                          // 7  ACCENT
+        t->accent_dark,                     // 8  ACCENT_DARK
+        t->button_bg,                       // 9  BUTTON_BG
+        t->button_bg_hover,                 // 10 BUTTON_HOVER
+        t->button_bg_pressed,               // 11 BUTTON_PRESSED
+        t->button_fg,                       // 12 BUTTON_FG
+        t->button_border,                   // 13 BUTTON_BORDER
+        t->button_border_focused,           // 14 BUTTON_BORDER_FOCUS
+        t->textfield_bg,                    // 15 FIELD_BG
+        t->textfield_fg,                    // 16 FIELD_FG
+        t->textfield_border,                // 17 FIELD_BORDER
+        t->textfield_border_focused,        // 18 FIELD_BORDER_FOCUS
+        t->textfield_cursor,                // 19 FIELD_CURSOR
+        t->checkbox_bg,                     // 20 CHECK_BG
+        t->checkbox_border,                 // 21 CHECK_BORDER
+        t->checkbox_check,                  // 22 CHECK_MARK
+        t->listview_bg,                     // 23 LIST_BG
+        t->listview_item_bg,                // 24 LIST_ITEM
+        t->listview_item_bg_selected,       // 25 LIST_SELECTED
+        t->listview_fg,                     // 26 LIST_FG
+        t->buttons_rounded ? 1u : 0u,       // 27 BUTTONS_ROUNDED
+        t->button_corner_radius,            // 28 BUTTON_RADIUS
+        t->spacing_sm,                      // 29 SPACING_SM
+        t->spacing_md,                      // 30 SPACING_MD
+        t->spacing_lg,                      // 31 SPACING_LG
+        t->widget_height,                   // 32 WIDGET_HEIGHT
+    };
+    uint32_t n = cap < THEME_ABI_COUNT ? cap : THEME_ABI_COUNT;
+    for (uint32_t i = 0; i < n; i++) out[i] = v[i];
+    return THEME_ABI_COUNT;
+}
+
 const Theme* theme_set(const Theme* new_theme) {
     const Theme* old = theme_current();
     if (new_theme) {

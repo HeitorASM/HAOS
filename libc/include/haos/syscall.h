@@ -58,6 +58,10 @@ extern "C" {
 #define SYS_GETRANDOM   30
 #define SYS_RENAME      31
 #define SYS_SET_WALLPAPER 32
+#define SYS_CLIPBOARD   33
+#define SYS_FONT_DATA   34
+#define SYS_THEME_GET   35
+#define SYS_WIN_SET_TITLE 36
 
 // Flags de open2() — espelham os O_* de kernel/syscall.h.
 #ifndef O_RDONLY

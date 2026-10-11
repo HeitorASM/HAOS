@@ -173,7 +173,14 @@ extern "C" {
 #define SYS_GETRANDOM 30 // sys_getrandom(void* buf, uint64_t len) -> len ou -1. len <= 256.
 #define SYS_RENAME    31 // sys_rename(old, old_len, new, new_len) -> 0 ou -1. Move/renomeia; não sobrescreve.
 #define SYS_SET_WALLPAPER 32 // sys_set_wallpaper(pixels, w, h) -> 0 ou -1. 0x00RRGGBB, w<=1024, h<=768. Global.
-#define SYS_COUNT     33
+#define SYS_CLIPBOARD 33 // sys_clipboard(op, buf, len): op 0 = GET (copia até len bytes p/ buf, devolve o
+                         //   tamanho TOTAL guardado); op 1 = SET (len <= 64 KiB; 0 limpa) -> 0 ou -1.
+#define SYS_FONT_DATA 34 // sys_font_data(buf, cap): 4096 bytes = 256 glifos 8x16 (CP437), 1 bit/pixel,
+                         //   MSB à esquerda -> devolve 4096 ou -1.
+#define SYS_THEME_GET 35 // sys_theme_get(buf, count): uint32_t[count] (ver libc/include/haos/uitheme.h);
+                         //   devolve o nº de entradas existentes ou -1. [0] = "geração" (muda com o tema).
+#define SYS_WIN_SET_TITLE 36 // sys_win_set_title(handle, title, len) -> 0 ou -1.
+#define SYS_COUNT     37
 
 // ---- whence de sys_lseek ----
 #define SEEK_SET  0

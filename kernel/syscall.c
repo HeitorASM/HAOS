@@ -29,6 +29,9 @@
 #include "user.h"
 #include "../gui/core/userwin.h"
 #include "../gui/wallpaper.h"
+#include "../gui/core/theme_abi.h"
+#include "../drivers/font.h"
+#include "clipboard.h"
 
 extern void syscall_entry(void); // definido em syscall_asm.asm
 extern volatile uint64_t timer_ticks; // idt_asm.asm — incrementado a 100 Hz (IRQ0)
@@ -943,6 +946,56 @@ static uint64_t sys_set_wallpaper(uint64_t pixels_ptr, uint64_t w, uint64_t h) {
            ? 0 : (uint64_t)-1;
 }
 
+// op 0 = GET, 1 = SET. Texto livre até 64 KiB, compartilhado com o Editor.
+static uint64_t sys_clipboard(uint64_t op, uint64_t buf, uint64_t len) {
+    if (len > CLIPBOARD_SYS_MAX) len = CLIPBOARD_SYS_MAX;
+    if (op == 0) {
+        if (len == 0) return clipboard_len();
+        if (!validate_user_range_writable(buf, len)) return (uint64_t)-1;
+        return clipboard_get((char*)buf, (uint32_t)len);
+    }
+    if (op == 1) {
+        if (len == 0) { clipboard_set(NULL, 0); return 0; }
+        if (!validate_user_range(buf, len)) return (uint64_t)-1;
+        clipboard_set((const char*)buf, (uint32_t)len);
+        return 0;
+    }
+    return (uint64_t)-1;
+}
+
+// Entrega a tabela de glifos do kernel (uma única fonte de verdade) para
+// programas que desenham texto por conta própria (libc: cv_text).
+static uint64_t sys_font_data(uint64_t buf, uint64_t cap) {
+    if (cap < 256 * FONT_H) return (uint64_t)-1;
+    if (!validate_user_range_writable(buf, 256 * FONT_H)) return (uint64_t)-1;
+    uint8_t* out = (uint8_t*)buf;
+    for (int c = 0; c < 256; c++) {
+        const uint8_t* g = font_get((uint8_t)c);
+        for (int r = 0; r < FONT_H; r++) out[c * FONT_H + r] = g ? g[r] : 0;
+    }
+    return 256 * FONT_H;
+}
+
+static uint64_t sys_theme_get(uint64_t buf, uint64_t count) {
+    if (count == 0 || count > 256) return (uint64_t)-1;
+    if (!validate_user_range_writable(buf, count * 4)) return (uint64_t)-1;
+    uint32_t tmp[THEME_ABI_COUNT];
+    uint32_t total = theme_export_abi(tmp, THEME_ABI_COUNT);
+    uint32_t n = count < total ? (uint32_t)count : total;
+    kmemcpy((void*)buf, tmp, n * 4);
+    return total;
+}
+
+static uint64_t sys_win_set_title(uint64_t handle, uint64_t title_ptr, uint64_t len) {
+    char title[64];
+    if (len == 0 || len > sizeof(title) - 1) return (uint64_t)-1;
+    if (!validate_user_range(title_ptr, len)) return (uint64_t)-1;
+    kmemcpy(title, (const void*)title_ptr, len);
+    title[len] = '\0';
+    return userwin_set_title(task_current()->id, (int64_t)handle, title, (uint32_t)len) == 0
+           ? 0 : (uint64_t)-1;
+}
+
 static uint64_t sys_getuid(void) { return task_current()->uid; }
 static uint64_t sys_getgid(void) { return task_current()->gid; }
 
@@ -1143,6 +1196,10 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_GETRANDOM:   return sys_getrandom(a1, a2);
         case SYS_RENAME:      return sys_rename(a1, a2, a3, a4);
         case SYS_SET_WALLPAPER: return sys_set_wallpaper(a1, a2, a3);
+        case SYS_CLIPBOARD:   return sys_clipboard(a1, a2, a3);
+        case SYS_FONT_DATA:   return sys_font_data(a1, a2);
+        case SYS_THEME_GET:   return sys_theme_get(a1, a2);
+        case SYS_WIN_SET_TITLE: return sys_win_set_title(a1, a2, a3);
         default:        return (uint64_t)-1; // syscall desconhecida
     }
 }
