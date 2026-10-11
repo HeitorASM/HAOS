@@ -13,6 +13,14 @@
 #    include "../kernel/generated/winpaint_hexec_data.h"
 #    define HAVE_WINPAINT_HEXEC 1
 #  endif
+#  if __has_include("../kernel/generated/imgview_hexec_data.h")
+#    include "../kernel/generated/imgview_hexec_data.h"
+#    define HAVE_IMGVIEW_HEXEC 1
+#  endif
+#  if __has_include("../kernel/generated/samples_data.h")
+#    include "../kernel/generated/samples_data.h"
+#    define HAVE_SAMPLE_IMAGES 1
+#  endif
 #endif
 // Sistema de arquivos virtual que roda na RAM do OS.
 // Arquivos crescem dinamicamente (dobra de capacidade) até VFS_FILE_MAX,
@@ -117,6 +125,9 @@ static const BuiltinBin g_builtin_bins[] = {
 #ifdef HAVE_WINPAINT_HEXEC
     { "winpaint.hexec", winpaint_hexec_data, WINPAINT_HEXEC_SIZE },
 #endif
+#ifdef HAVE_IMGVIEW_HEXEC
+    { "imgview.hexec", imgview_hexec_data, IMGVIEW_HEXEC_SIZE },
+#endif
 };
 
 static bool bytes_equal(const void* a, const void* b, uint32_t n) {
@@ -153,6 +164,46 @@ static bool vfs_install_builtin_bins(VfsNode* bin) {
     return changed;
 }
 
+// Imagens de exemplo em /share/images (geradas por tools/gen_samples.py).
+// Mesma política dos executáveis: cria o que falta e restaura o que foi alterado.
+static bool vfs_install_builtin_samples(VfsNode* root) {
+#ifdef HAVE_SAMPLE_IMAGES
+    bool changed = false;
+    VfsNode* share = vfs_find_child(root, "share");
+    if (!share) {
+        share = vfs_mkdir(root, "share");
+        if (!share) return false;
+        vfs_set_owner(share, 0, 0, VFS_MODE_DIR_DEFAULT);
+        changed = true;
+    }
+    if (share->type != VFS_DIR) return changed;
+    VfsNode* images = vfs_find_child(share, "images");
+    if (!images) {
+        images = vfs_mkdir(share, "images");
+        if (!images) return changed;
+        vfs_set_owner(images, 0, 0, VFS_MODE_DIR_DEFAULT);
+        changed = true;
+    }
+    if (images->type != VFS_DIR) return changed;
+
+    for (uint32_t i = 0; i < sizeof(g_sample_files) / sizeof(g_sample_files[0]); i++) {
+        const SampleFile* sf = &g_sample_files[i];
+        VfsNode* f = vfs_find_child(images, sf->name);
+        if (f && f->type != VFS_FILE) continue;
+        if (f && f->size == sf->size && f->data && bytes_equal(f->data, sf->data, sf->size)) continue;
+        if (!f) f = vfs_touch(images, sf->name);
+        if (!f || !vfs_ensure_capacity(f, sf->size)) continue;
+        kmemcpy(f->data, sf->data, sf->size);
+        f->size = sf->size;
+        changed = true;
+    }
+    return changed;
+#else
+    (void)root;
+    return false;
+#endif
+}
+
 static void vfs_create_defaults(void) {
     VfsNode* bin  = vfs_mkdir(g_root, "bin");
     VfsNode* home = vfs_mkdir(g_root, "home");
@@ -172,6 +223,11 @@ static void vfs_create_defaults(void) {
 
     // Executáveis embutidos no kernel (ver g_builtin_bins acima).
     vfs_install_builtin_bins(bin);
+
+    // Imagens de exemplo (/share/images) — numa gravação só.
+    vfs_batch_begin();
+    vfs_install_builtin_samples(g_root);
+    vfs_batch_end();
 
     // /etc/haos.conf
     VfsNode* conf = vfs_touch(etc, "haos.conf");
@@ -199,6 +255,8 @@ void vfs_init(void) {
         VfsNode* bin = vfs_find_child(g_root, "bin");
         if (!bin) bin = vfs_mkdir(g_root, "bin");
         bool changed = (bin && bin->type == VFS_DIR) && vfs_install_builtin_bins(bin);
+        bool samples_changed = vfs_install_builtin_samples(g_root);
+        changed = changed || samples_changed;
 
         g_persistent = true;
         if (changed) vfs_persist();

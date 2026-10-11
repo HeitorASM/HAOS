@@ -10,6 +10,7 @@
 #include "../../kernel/lang.h"
 #include "../../kernel/keyboard.h"
 #include "terminal.h"
+#include "applaunch.h"
 #include "../../fs/perm.h"
 #include "../../kernel/user.h"
 
@@ -51,6 +52,30 @@ enum {
 };
 
 enum class Mode : uint8_t { Normal, Rename, ConfirmDelete };
+
+// Associação extensão -> programa (abre com duplo-clique/Enter/Abrir). Os
+// programas são .hexec em /bin; se faltar, o Explorador avisa. Para trocar o
+// programa de uma extensão, mude só esta tabela.
+struct Assoc { const char* ext; const char* program; };
+static const Assoc k_assoc[] = {
+    { ".png", "/bin/imgview.hexec" },
+    { ".bmp", "/bin/imgview.hexec" },
+};
+
+static int lower_c(int c) { return (c >= 'A' && c <= 'Z') ? c + 32 : c; }
+
+static const char* assoc_for(const char* name) {
+    size_t l = kstrlen(name);
+    for (const Assoc& a : k_assoc) {
+        size_t el = kstrlen(a.ext);
+        if (l <= el) continue;
+        bool same = true;
+        for (size_t i = 0; i < el; i++)
+            if (lower_c(name[l - el + i]) != a.ext[i]) { same = false; break; }
+        if (same) return a.program;
+    }
+    return nullptr;
+}
 
 static bool window_alive(Window* w) {
     for (int i = 0; i < wm_window_slot_count(); i++)
@@ -446,6 +471,12 @@ public:
                 set_status(tr(STR_PERM_DENIED));
                 return;
             }
+        }
+        if (const char* prog = assoc_for(node->name)) {
+            char ipath[512];
+            file_manager_path(node, ipath, sizeof(ipath));
+            set_status(tr(app_launch(prog, ipath) ? STR_FM_OPENING_VIEWER : STR_FM_NO_VIEWER));
+            return;
         }
         if (!file_manager_is_text(node)) {
             set_status(tr(STR_FILE_MANAGER_BINARY));

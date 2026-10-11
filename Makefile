@@ -118,6 +118,7 @@ CXX_SRCS = kernel/memory.cpp      \
            gui/apps/terminal.cpp  \
            gui/apps/editor.cpp    \
            gui/apps/file_manager.cpp \
+           gui/apps/applaunch.cpp \
            gui/elements/taskbar.cpp \
            gui/elements/startmenu.cpp \
            gui/elements/menu.cpp \
