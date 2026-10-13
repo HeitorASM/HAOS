@@ -1,19 +1,38 @@
-# Arquivos de Objeto e Binários
+# ── Artefatos de build do kernel ──────────────────────────
 *.o
+*.a
 *.elf
-
-# Ignora a imagem final do sistema
+*.bin
+*.map
+*.d
 *.iso
-
+*.img
 iso/boot/haos.elf
 
+# ── Artefatos de build da libc / apps de usuário ──────────
+libc/build/
+*.hexec
+
+# ── Headers GERADOS (tools/build_apps.sh, tools/gen_samples.py) ──
+# Cópia dupla: examples/<app>/<app>_hexec_data.h e kernel/generated/
+examples/*/*_hexec_data.h
+kernel/generated/
+# (se preferir manter o `make` funcionando sem rodar build_apps antes,
+#  NÃO ignore kernel/generated/ — veja a nota na avaliação)
+
+assets/wallpapers/
+
 *.log
-*.bin
-
-.vscode/
-.idea/
-
+*.tmp
+*.bak
+*.swp
+*~
+__pycache__/
+*.pyc
 .venv/
 venv/
 
-assets/wallpapers/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

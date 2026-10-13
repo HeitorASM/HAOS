@@ -15,7 +15,27 @@
 //  Constantes
 // ============================================================
 static constexpr uint64_t PAGE_SIZE       = 4096;
-static constexpr uint64_t HEAP_INIT_PAGES = 256;   // 1 MB de heap inicial
+static constexpr uint64_t HEAP_INIT_PAGES = 2048;  // 8 MB de heap inicial.
+                                                     // Antes eram 256 páginas
+                                                     // (1 MB), o que ficava
+                                                     // apertado assim que
+                                                     // várias janelas de GUI
+                                                     // eram abertas ao mesmo
+                                                     // tempo — e, pior, forçava
+                                                     // heap_expand() a procurar
+                                                     // blocos fisicamente
+                                                     // CONTÍGUOS numa memória já
+                                                     // fragmentada por páginas de
+                                                     // tabelas/pilhas/imagens de
+                                                     // processo, falhando de
+                                                     // forma imprevisível. Uma
+                                                     // heap inicial maior, obtida
+                                                     // logo no boot (quando a
+                                                     // memória ainda está
+                                                     // totalmente desfragmentada),
+                                                     // torna essa expansão
+                                                     // desesperada desnecessária
+                                                     // no uso normal.
 
 // ============================================================
 //  MÓDULO 1 — PageFrameAllocator (PFA) por Bitmap
@@ -357,8 +377,13 @@ int kstrcmp(const char* a, const char* b) {
 }
 
 int kstrncmp(const char* a, const char* b, size_t n) {
-    while (n-- && *a && *a == *b) { a++; b++; }
-    if (!n) return 0;
+    // Compara no máximo `n` caracteres. A versão anterior usava `n--` na
+    // condição do laço: ao terminar de comparar `n` caracteres IGUAIS, n
+    // dava a volta (0 - 1) e a função seguia comparando o resto das
+    // strings — então um teste de prefixo (kstrncmp(s, "haos:", 5) == 0)
+    // só dava 0 quando `s` terminava logo depois do prefixo.
+    while (n && *a && *a == *b) { a++; b++; n--; }
+    if (n == 0) return 0;
     return (unsigned char)*a - (unsigned char)*b;
 }
 
@@ -379,6 +404,27 @@ char* kstrncpy(char* dst, const char* src, size_t n) {
 
 char* kstrcat(char* dst, const char* src) {
     char* d = dst; while (*d) d++; while ((*d++ = *src++)); return dst;
+}
+
+char* kstrncat(char* dst, const char* src, size_t dst_size) {
+    if (dst_size == 0) return dst;
+
+    size_t len = 0;
+    while (len < dst_size && dst[len]) len++;
+    if (len >= dst_size - 1) {
+        // Destino já está cheio (ou sem terminador dentro do limite):
+        // só garante a terminação e devolve, sem escrever nada novo.
+        dst[dst_size - 1] = '\0';
+        return dst;
+    }
+
+    size_t i = 0;
+    while (src[i] && (len + i) < dst_size - 1) {
+        dst[len + i] = src[i];
+        i++;
+    }
+    dst[len + i] = '\0';
+    return dst;
 }
 
 void kitoa(int64_t n, char* buf) {

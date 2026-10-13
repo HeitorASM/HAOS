@@ -32,8 +32,18 @@ public:
     bool    resizing;
     uint8_t resize_edge; // combinação de RESIZE_* abaixo, 0 = não redimensionando
 
-    // bounds salvos antes de maximizar, para restaurar ao desmaximizar
+    // bounds salvos antes de maximizar OU de encaixar (snap) na borda,
+    // para restaurar o tamanho/posição "normais" depois
     Rect saved_bounds;
+
+    // Janela encaixada na metade esquerda/direita da tela (arrastar a
+    // barra de título até a borda — ver wm.cpp). Mutuamente exclusivo
+    // com `maximized`. Arrastar uma janela encaixada a "solta" e volta
+    // ao tamanho de saved_bounds, igual a uma janela maximizada.
+    uint8_t snapped = 0;
+    static constexpr uint8_t SNAP_NONE  = 0;
+    static constexpr uint8_t SNAP_LEFT  = 1;
+    static constexpr uint8_t SNAP_RIGHT = 2;
 
     // Tamanho mínimo que o WM respeita ao redimensionar (evita
     // encolher a janela até um estado inutilizável ou até bounds

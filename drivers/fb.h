@@ -60,6 +60,13 @@ uint32_t fb_height(void);
 // ---- Primitivas de desenho --------------------------------------
 void fb_put_pixel(uint32_t x, uint32_t y, uint32_t color);
 void fb_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
+
+// Copia um bloco de pixels 0xRRGGBB (w x h; cada linha de `src` começa
+// `src_stride` pixels depois da anterior) para (x, y) no buffer de
+// desenho, recortando nas bordas da tela. Usado para exibir o canvas
+// de janelas de processos de usuário (gui/core/userwin.cpp).
+void fb_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+             const uint32_t* src, uint32_t src_stride);
 void fb_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
                   uint32_t color, uint32_t thickness);
 void fb_clear(uint32_t color);

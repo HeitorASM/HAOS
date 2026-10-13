@@ -148,3 +148,7 @@ void gdt_init(void) {
 void tss_set_kernel_stack(uint64_t rsp0) {
     tss.rsp0 = rsp0;
 }
+
+uint64_t gdt_get_initial_kernel_stack_top(void) {
+    return (uint64_t)(kernel_stack + KERNEL_STACK_SIZE);
+}

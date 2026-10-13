@@ -1,3 +1,5 @@
+#include "acpi.h"
+#include "../drivers/xhci.h"
 #include "types.h"
 #include "gdt.h"
 #include "idt.h"
@@ -8,14 +10,19 @@
 #include "paging.h"
 #include "syscall.h"
 #include "usermode.h"
+#include "task.h"
+#include "scheduler.h"
 #include "sysinfo.h"
 #include "lang.h"
 #include "../drivers/fb.h"
 #include "../drivers/mouse.h"
 #include "../drivers/rtc.h"
 #include "../drivers/ata_pio.h"
+#include "../drivers/storage.h"
 #include "../gui/gui.h"
 #include "../fs/vfs.h"
+
+extern void set_current_syscall_stack(uint64_t top); // syscall_asm.asm
 
 #define MB2_MAGIC  0x36D76289U
 #define MB2_TAG_FB 8
@@ -46,6 +53,16 @@ void kernel_main(uint32_t magic, uint32_t mb_info_raw) {
     // GDT (agora inclui seletores de usuário + TSS)
     gdt_init();
 
+    // Valor inicial seguro para current_syscall_stack_top (ver
+    // comentário grande em kernel/syscall_asm.asm) — ANTES de
+    // qualquer processo de usuário poder existir. Na prática
+    // syscall_entry só é alcançável a partir de Ring 3, então isso
+    // seria redundante com o que scheduler.c/do_switch_to já
+    // configura na primeira troca para um processo de usuário real —
+    // mas não custa nada garantir que a variável nunca fica com o
+    // valor 0 (BSS zerado) nessa janela, por defesa.
+    set_current_syscall_stack(gdt_get_initial_kernel_stack_top());
+
     // IDT + interrupções
     idt_init();
     pic_init();
@@ -53,6 +70,22 @@ void kernel_main(uint32_t magic, uint32_t mb_info_raw) {
 
     // Teclado e Mouse
     keyboard_init();
+
+    // ---- Scheduler / multitarefa (etapa 1: kernel threads) ----
+    // PRECISA vir ANTES do "sti" abaixo: assim que interrupções são
+    // habilitadas, o PIT (IRQ0) começa a chamar scheduler_tick() a
+    // cada 10ms. Sem a fila do scheduler já montada, isso seria uma
+    // desreferência de ponteiro nulo dentro do handler de interrupção
+    // — trava o boot inteiro antes até do framebuffer ser inicializado,
+    // sem nenhuma mensagem na tela (foi exatamente esse o bug que
+    // causou tela 100% preta ao testar no VirtualBox: o "sti" já
+    // rodava bem antes de tasking_init()/scheduler_init() existirem).
+    // scheduler_tick() também tem uma guarda defensiva própria para o
+    // caso de outro ponto de inicialização futuro cometer o mesmo
+    // deslize, mas a ordem correta é esta: inicializar o scheduler
+    // antes de habilitar interrupções, não depois.
+    tasking_init();
+    scheduler_init();
 
     // Habilita interrupções
     __asm__ volatile("sti");
@@ -71,6 +104,9 @@ void kernel_main(uint32_t magic, uint32_t mb_info_raw) {
     // quando implementarmos Ring 3 com espaços de endereço próprios
     // por processo).
     paging_init();
+
+    // ACPI (desligar/reiniciar de verdade): precisa do identity-map já pronto.
+    acpi_init(mb_info_raw);
 
     // Percorre tags para encontrar o framebuffer
     uint8_t* ptr = (uint8_t*)(uintptr_t)(mb_info_raw + 8);
@@ -111,7 +147,8 @@ void kernel_main(uint32_t magic, uint32_t mb_info_raw) {
 
     mouse_init();
     rtc_init();
-    ata_pio_init();
+    storage_init();    // IDE/ATA + SATA/AHCI, com regras de segurança (drivers/storage.c)
+    xhci_init();       // USB 3/2 (xHCI): teclado e mouse HID; no-op sem controlador
     vfs_init();
     lang_init();
 

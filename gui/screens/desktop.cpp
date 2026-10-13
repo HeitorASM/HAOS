@@ -1,9 +1,12 @@
 // gui/screens/desktop.cpp — Loop principal do desktop
 #include "desktop.h"
+#include "../../kernel/power.h"
 #include "../core/wm.h"
 #include "../elements/icons.h"
 #include "../elements/taskbar.h"
 #include "../elements/startmenu.h"
+#include "../elements/menu.h"
+#include "../core/userwin.h"
 #include "../apps/terminal.h"
 #include "../apps/about.h"
 #include "../apps/config.h"
@@ -16,7 +19,9 @@
 #include "../../kernel/types.h"
 #include "../../kernel/memory.h"
 #include "../../kernel/lang.h"
+#include "../../kernel/task.h"
 #include "../wallpaper.h"
+#include "../core/theme.h"
 
 extern "C" volatile uint64_t timer_ticks;
 
@@ -28,8 +33,30 @@ static void handle_desktop_key(uint8_t c);
 static void desktop_handle_click(int32_t mx, int32_t my, uint32_t sw, uint32_t sh);
 
 static void handle_desktop_key(uint8_t c) {
+    // Menu popup aberto: navega por ele (setas/Enter/Esc) e engole a tecla;
+    // só Alt+Tab / Alt+F4 passam, fechando o menu antes.
+    if (menu_is_open()) {
+        if (c == KEY_SWITCH_WINDOW || c == KEY_CLOSE_WINDOW) menu_close();
+        else if (menu_key(c)) return;
+    }
+
     if (c == 27) {
         start_menu_open = false;
+        return;
+    }
+
+    // Atalhos globais de janela (ver kernel/keyboard.c): Alt+Tab ou
+    // Ctrl+Tab alterna para a próxima janela; Alt+F4 fecha a focada.
+    // Tratados AQUI, antes de repassar a tecla à janela em foco, para
+    // funcionarem independentemente do app que estiver ativo.
+    if (c == KEY_SWITCH_WINDOW) {
+        start_menu_open = false;
+        wm_focus_next();
+        return;
+    }
+    if (c == KEY_CLOSE_WINDOW) {
+        Window* f = wm_get_focused();
+        if (f) wm_close(f);
         return;
     }
 
@@ -80,6 +107,106 @@ static void desktop_handle_click(int32_t mx, int32_t my, uint32_t sw, uint32_t s
 }
 
 // -------------------------------------------------------------
+// Ações do menu de contexto do desktop (botão direito)
+// -------------------------------------------------------------
+// IDs do menu de contexto do desktop.
+enum {
+    CTX_TERMINAL = 1,
+    CTX_FILES,
+    CTX_EDITOR,
+    CTX_SETTINGS,
+    CTX_ABOUT,
+    CTX_WALLPAPER_DEFAULT = 50,
+    CTX_WALLPAPER_CUSTOM  = 51,
+    CTX_WALLPAPER_BASE    = 100,   // + índice do wallpaper
+    CTX_THEME_BASE        = 200    // + preset do tema
+};
+
+static void desktop_menu_activate(int id, void*) {
+    uint32_t sw = fb_width(), sh = fb_height();
+    if (id >= CTX_THEME_BASE) {
+        theme_apply_preset(id - CTX_THEME_BASE);
+    } else if (id >= CTX_WALLPAPER_BASE) {
+        wallpaper_set(id - CTX_WALLPAPER_BASE);
+    } else {
+        switch (id) {
+            case CTX_TERMINAL:
+                if (!terminal_win || !terminal_win->active)
+                    terminal_win = terminal_create((int32_t)(sw/2 - 340), (int32_t)(sh/2 - 200));
+                else
+                    wm_focus(terminal_win);
+                break;
+            case CTX_FILES:
+                file_manager_create((int32_t)(sw/2 - 310), (int32_t)(sh/2 - 220));
+                break;
+            case CTX_EDITOR:
+                editor_create((int32_t)(sw/2 - 300), (int32_t)(sh/2 - 200), nullptr);
+                break;
+            case CTX_SETTINGS:
+                open_config_window();
+                break;
+            case CTX_ABOUT:
+                open_about_window();
+                break;
+            case CTX_WALLPAPER_DEFAULT:
+                wallpaper_set(-1);
+                break;
+            case CTX_WALLPAPER_CUSTOM:
+                wallpaper_use_custom();
+                break;
+            default:
+                break;
+        }
+    }
+}
+
+// Monta e abre o menu de contexto do desktop em (x, y).
+static void desktop_open_context_menu(int32_t x, int32_t y) {
+    menu_close();
+    menu_pool_reset();
+    Menu* m = menu_new();
+    if (!m) return;
+
+    menu_add(m, tr(STR_TERMINAL),    CTX_TERMINAL);
+    menu_add(m, tr(STR_ICON_FILES),  CTX_FILES);
+    menu_add(m, tr(STR_ICON_EDITOR), CTX_EDITOR);
+    menu_add_separator(m);
+
+    Menu* wp = menu_add_submenu(m, tr(STR_CTX_WALLPAPER));
+    if (wp) {
+        bool custom = wallpaper_is_custom();
+        int cur = custom ? -2 : wallpaper_get();
+        menu_add(wp, tr(STR_CONFIG_DEFAULT_WALLPAPER), CTX_WALLPAPER_DEFAULT,
+                 cur == -1 ? MENU_FLAG_CHECKED : 0);
+        int n = wallpaper_count();
+        for (int i = 0; i < n && wp->count < MENU_MAX_ITEMS - 1; i++)
+            menu_add(wp, wallpaper_name(i), CTX_WALLPAPER_BASE + i,
+                     i == cur ? MENU_FLAG_CHECKED : 0);
+        // A imagem do usuário (definida pelo visualizador / Explorador) — sempre
+        // listada; clicar volta a usá-la se estava desligada.
+        menu_add(wp, tr(STR_CTX_WALLPAPER_CUSTOM), CTX_WALLPAPER_CUSTOM,
+                 custom ? MENU_FLAG_CHECKED : 0);
+    }
+
+    Menu* th = menu_add_submenu(m, tr(STR_CTX_THEME));
+    if (th) {
+        static const StrID names[THEME_PRESET_COUNT] = {
+            STR_CONFIG_THEME_DEFAULT, STR_CONFIG_THEME_TERMINAL, STR_CONFIG_THEME_XP,
+            STR_CONFIG_THEME_BW,      STR_CONFIG_THEME_CANDY
+        };
+        int cur = theme_current_preset();
+        for (int i = 0; i < THEME_PRESET_COUNT; i++)
+            menu_add(th, tr(names[i]), CTX_THEME_BASE + i, i == cur ? MENU_FLAG_CHECKED : 0);
+    }
+
+    menu_add_separator(m);
+    menu_add(m, tr(STR_SETTINGS), CTX_SETTINGS);
+    menu_add(m, tr(STR_ABOUT),    CTX_ABOUT);
+
+    menu_popup(m, x, y, desktop_menu_activate, nullptr);
+}
+
+// -------------------------------------------------------------
 // Loop principal do desktop
 // -------------------------------------------------------------
 extern "C" void run_desktop(void) {
@@ -95,8 +222,21 @@ extern "C" void run_desktop(void) {
 
     bool was_pressed = false;
 
+    // Throttle do reaper de tasks zumbis: rodar isso a cada frame do
+    // desktop seria desperdício (na imensa maioria dos frames não há
+    // nenhuma task zumbi para coletar). Uma vez por segundo é mais
+    // que suficiente para a Fase 1 (poucas kernel threads de vida
+    // curta) — reavaliar se/quando processos de usuário passarem a
+    // nascer e morrer com muito mais frequência.
+    uint64_t next_reap_tick = timer_ticks + 100; // pit_init(100) => 100 ticks/s
+
     while (1) {
         uint64_t ticks = timer_ticks;
+
+        if (ticks >= next_reap_tick) {
+            task_reap_zombies();
+            next_reap_tick = ticks + 100;
+        }
 
         uint8_t c;
         while ((c = keyboard_getchar()) != 0)
@@ -111,23 +251,59 @@ extern "C" void run_desktop(void) {
 
         if (scroll != 0) wm_mouse_scroll(mx, my, scroll);
 
+        // Botão direito: abre o menu de contexto do desktop, mas só sobre
+        // a área livre (nem taskbar, nem uma janela). Com o menu Iniciar
+        // aberto, o clique direito apenas o fecha.
+        menu_update(mx, my);     // hover do menu popup (abre/fecha submenus)
+        if (mouse_right_clicked()) {
+            menu_close();
+            if (start_menu_open) {
+                start_menu_open = false;
+            } else if (my < (int32_t)(sh - TASKBAR_H)) {
+                if (wm_window_at(mx, my)) wm_mouse_right_down(mx, my);   // a janela decide
+                else                      desktop_open_context_menu(mx, my);
+            }
+        }
+
+        // Clique esquerdo: cada clique tem UM destino, seguindo a ordem
+        // das camadas na tela (de cima para baixo): menu de contexto ->
+        // taskbar -> menu Iniciar -> janelas -> ícones do desktop.
+        // ANTES, o clique ia SEMPRE para os ícones do desktop (abrindo o
+        // app do ícone mesmo quando caía dentro de uma janela por cima
+        // dele) e SEMPRE para o WM (atravessando o menu Iniciar/taskbar
+        // e podendo roubar o foco da janela que o item acabou de abrir).
         if (pressed && !was_pressed) {
             uint32_t ty = sh - TASKBAR_H;
-            if (my >= (int32_t)ty) {
+            bool to_wm    = true;   // oferece o clique às janelas
+            bool to_icons = false;  // se nenhuma janela o consumir, vale para os ícones
+
+            // O menu popup vem primeiro: clique dentro dele é só dele; fora, ele
+            // fecha e o clique segue adiante (taskbar, janelas, ícones).
+            bool in_ctx = menu_is_open() && menu_mouse_down(mx, my);
+            if (in_ctx) to_wm = false;
+
+            if (in_ctx) {
+                // já tratado acima
+            }
+            else if (my >= (int32_t)ty) {
                 if (mx >= 4 && mx < 4 + START_BTN_W) {
                     start_menu_open = !start_menu_open;
                 } else {
                     Window* clicked = taskbar_hit_test(mx, my);
                     if (clicked) {
-                        if (clicked->minimized) wm_restore(clicked);
+                        if (clicked->minimized) wm_unminimize(clicked); // volta como estava (maximizada continua maximizada)
                         else if (clicked->focused) wm_minimize(clicked); // clicar de novo na já focada minimiza (padrão Windows)
                         else wm_focus(clicked);
                         start_menu_open = false;
                     }
                 }
+                to_wm = false; // clique na taskbar não vai para as janelas
             }
             else if (start_menu_open) {
                 int item = start_menu_hit_test(mx, my);
+                // Item clicado: o menu consome o clique. Fora dos itens
+                // (-1): só fecha o menu e deixa o clique seguir adiante.
+                to_wm = (item == -1);
                 if (item == 0) {
                     if (!terminal_win || !terminal_win->active)
                         terminal_win = terminal_create(
@@ -148,17 +324,18 @@ extern "C" void run_desktop(void) {
                                         (int32_t)(sh / 2 - 220));
                     start_menu_open = false;
                 } else if (item == 6) {
-                    outb(0x64, 0xFE);
-                    while(1) __asm__("hlt");
+                    power_shutdown();        // sync + ACPI S5 (antes: só reiniciava, sem gravar)
                 } else if (item == -1) {
                     start_menu_open = false;
                 }
             }
             else {
-                desktop_handle_click(mx, my, sw, sh);
+                to_icons = true;
             }
 
-            wm_mouse_down(mx, my);
+            bool wm_consumed = to_wm && wm_mouse_down(mx, my);
+            if (to_icons && !wm_consumed)
+                desktop_handle_click(mx, my, sw, sh);
         }
 
         if (pressed && was_pressed)
@@ -167,6 +344,26 @@ extern "C" void run_desktop(void) {
             wm_mouse_up(mx, my);
 
         was_pressed = pressed;
+
+        // Ponto seguro para executar ações diferidas: todo o
+        // processamento de entrada deste frame já terminou (nenhum
+        // handler de evento está na pilha de chamadas), e o desenho
+        // ainda não começou. É aqui que janelas pedidas de dentro de
+        // handlers (ex.: o explorador abrindo um terminal ao
+        // duplo-clicar num .hexec) são de fato criadas, sem modificar
+        // as listas do WM no meio de uma iteração sobre elas.
+        //
+        // Fica ANTES do `continue` do throttle de render logo abaixo
+        // de propósito: se ficasse depois, uma ação enfileirada
+        // poderia esperar vários frames (ou nunca rodar, se o
+        // throttle sempre pulasse essa parte) — o usuário veria o
+        // duplo-clique simplesmente não fazer nada.
+        wm_run_deferred_actions();
+
+        // Fecha janelas de processos de usuário que terminaram (ou que
+        // pediram SYS_WIN_DESTROY). Tem que ser AQUI, na task da GUI:
+        // a destruição de uma janela nunca ocorre dentro da syscall.
+        userwin_reap();
 
         if (ticks - last_render_tick < 2) {
             __asm__("pause");
@@ -187,6 +384,8 @@ extern "C" void run_desktop(void) {
 
         if (start_menu_open)
             draw_start_menu();
+
+        menu_draw();
 
         // Cursor muda de ícone ao passar sobre uma borda/canto
         // redimensionável da janela focada (comportamento padrão

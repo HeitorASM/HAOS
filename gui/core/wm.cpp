@@ -2,6 +2,11 @@
 #include "../../kernel/memory.h"
 #include "../../drivers/fb.h"
 #include "../elements/taskbar.h"
+#include "theme.h"
+
+// Contador de ticks do PIT (100 Hz) — definido em kernel/idt_asm.asm.
+// Usado para detectar duplo-clique na barra de título.
+extern "C" volatile uint64_t timer_ticks;
 
 namespace {
 
@@ -101,6 +106,97 @@ uint8_t hit_test_resize_edge(Window* win, int32_t mx, int32_t my) {
 // deve virar MouseDrag (equivalente ao on_drag antigo, usado p.ex.
 // para seleção de texto) e se soltar o botão deve gerar MouseUp
 // para os widgets internos.
+// ---- Duplo-clique na barra de título / snap nas bordas ----
+//
+// Só pode haver UM arrasto de janela por vez (um único ponteiro), então
+// este estado é global ao WM em vez de ficar dentro de cada Window.
+
+int32_t s_press_x = 0, s_press_y = 0;   // onde o botão foi pressionado na titlebar
+Rect    s_drag_origin = {0, 0, 0, 0};   // geometria "normal" da janela ao começar o arrasto
+
+Window*  s_click_win  = nullptr;        // última janela clicada na titlebar
+uint64_t s_click_tick = 0;
+int32_t  s_click_x = 0, s_click_y = 0;
+
+const uint64_t DOUBLE_CLICK_TICKS = 40; // 400 ms (PIT a 100 Hz)
+const int32_t  DOUBLE_CLICK_SLOP  = 5;  // tolerância de movimento entre os cliques, em px
+const int32_t  DRAG_START_DIST    = 5;  // movimento mínimo para "soltar" uma janela maximizada/encaixada
+const int32_t  SNAP_EDGE          = 2;  // o cursor a <= 2 px da borda da tela ativa o snap
+
+enum SnapZone { SNAP_ZONE_NONE = 0, SNAP_ZONE_LEFT, SNAP_ZONE_RIGHT, SNAP_ZONE_TOP };
+SnapZone s_snap_zone = SNAP_ZONE_NONE;  // zona sob o cursor durante um arrasto
+
+// Registra um clique na barra de título de `win` e diz se ele completa
+// um duplo-clique (mesma janela, dentro de 400 ms e de 5 px do clique
+// anterior). Um duplo-clique "consome" o par: o terceiro clique começa
+// uma nova contagem em vez de virar outro duplo.
+bool title_double_click(Window* win, int32_t mx, int32_t my) {
+    uint64_t now = timer_ticks;
+    int32_t dx = mx - s_click_x; if (dx < 0) dx = -dx;
+    int32_t dy = my - s_click_y; if (dy < 0) dy = -dy;
+
+    bool dbl = (s_click_win == win) &&
+               (now - s_click_tick <= DOUBLE_CLICK_TICKS) &&
+               dx <= DOUBLE_CLICK_SLOP && dy <= DOUBLE_CLICK_SLOP;
+    if (dbl) {
+        s_click_win = nullptr;
+    } else {
+        s_click_win  = win;
+        s_click_tick = now;
+        s_click_x    = mx;
+        s_click_y    = my;
+    }
+    return dbl;
+}
+
+// Começa a arrastar `win` pela barra de título.
+void begin_titlebar_drag(Window* win, int32_t mx, int32_t my) {
+    s_press_x = mx;
+    s_press_y = my;
+    // Se a janela já está maximizada/encaixada, a geometria "normal" é a
+    // salva; senão, é a atual. É para onde ela volta ao ser restaurada
+    // depois de um snap — SEM isso, saved_bounds guardaria a posição
+    // onde a janela estava no instante de soltar (já arrastada até a
+    // borda), e restaurar a colocaria num lugar estranho.
+    s_drag_origin = (win->maximized || win->snapped) ? win->saved_bounds : win->bounds;
+    win->dragging = true;
+    win->drag_ox  = mx - win->bounds.x;
+    win->drag_oy  = my - win->bounds.y;
+}
+
+// Retângulo que a janela ocuparia se encaixada em `zone` (a área útil
+// termina em cima da taskbar).
+Rect snap_rect(SnapZone zone) {
+    int32_t sw = (int32_t)fb_width();
+    int32_t sh = (int32_t)fb_height() - (int32_t)TASKBAR_H;
+    switch (zone) {
+        case SNAP_ZONE_LEFT:  return Rect{0,      0, (uint32_t)(sw / 2),       (uint32_t)sh};
+        case SNAP_ZONE_RIGHT: return Rect{sw / 2, 0, (uint32_t)(sw - sw / 2),  (uint32_t)sh};
+        default:              return Rect{0,      0, (uint32_t)sw,             (uint32_t)sh};
+    }
+}
+
+SnapZone snap_zone_at(int32_t mx, int32_t my) {
+    int32_t sw = (int32_t)fb_width();
+    if (my <= SNAP_EDGE)          return SNAP_ZONE_TOP;    // topo tem prioridade sobre os cantos
+    if (mx <= SNAP_EDGE)          return SNAP_ZONE_LEFT;
+    if (mx >= sw - 1 - SNAP_EDGE) return SNAP_ZONE_RIGHT;
+    return SNAP_ZONE_NONE;
+}
+
+// Encaixa `win` em `zone` (chamado ao SOLTAR uma janela arrastada).
+void apply_snap(Window* win, SnapZone zone) {
+    if (zone == SNAP_ZONE_TOP) {
+        if (!win->maximized) wm_maximize_toggle(win);
+        win->saved_bounds = s_drag_origin;   // restaurar volta para onde estava ANTES do arrasto
+        return;
+    }
+    win->saved_bounds = s_drag_origin;
+    win->bounds  = snap_rect(zone);
+    win->snapped = (zone == SNAP_ZONE_LEFT) ? Window::SNAP_LEFT : Window::SNAP_RIGHT;
+    win->on_resized();
+}
+
 bool s_content_mouse_down[MAX_WINDOWS] = { false };
 
 } // namespace anônimo
@@ -119,6 +215,9 @@ Window* wm_create(WinType type, int32_t x, int32_t y,
     if (slot < 0) return nullptr;
 
     Window* win = new Window(x, y, w, h, title, type);
+    if (!win) return nullptr; // heap esgotada — ver comentário em
+                                // terminal_create (com -fno-exceptions,
+                                // `new` devolve nullptr em vez de lançar)
     s_windows[slot] = win;
     wm_focus(win);
     return win;
@@ -132,6 +231,44 @@ bool wm_register(Window* win) {
     s_windows[slot] = win;
     wm_focus(win);
     return true;
+}
+
+// ---- Fila de ações diferidas (ver comentário extenso em wm.h) ----
+#define WM_MAX_DEFERRED 8
+
+namespace {
+struct DeferredAction {
+    wm_deferred_fn fn;
+    void*          arg;
+};
+DeferredAction s_deferred[WM_MAX_DEFERRED];
+int            s_deferred_count = 0;
+}
+
+bool wm_defer(wm_deferred_fn fn, void* arg) {
+    if (!fn) return false;
+    if (s_deferred_count >= WM_MAX_DEFERRED) return false;
+    s_deferred[s_deferred_count].fn  = fn;
+    s_deferred[s_deferred_count].arg = arg;
+    s_deferred_count++;
+    return true;
+}
+
+void wm_run_deferred_actions(void) {
+    // Copia e zera a fila ANTES de executar qualquer ação: se uma
+    // ação registrar outra ação diferida (perfeitamente legítimo),
+    // a nova entra na fila já vazia e roda só na PRÓXIMA passagem —
+    // nunca dentro desta. Sem essa cópia, uma ação que se
+    // re-registrasse a si mesma criaria um laço infinito aqui
+    // dentro, travando o sistema.
+    DeferredAction pending[WM_MAX_DEFERRED];
+    int count = s_deferred_count;
+    for (int i = 0; i < count; i++) pending[i] = s_deferred[i];
+    s_deferred_count = 0;
+
+    for (int i = 0; i < count; i++) {
+        if (pending[i].fn) pending[i].fn(pending[i].arg);
+    }
 }
 
 void wm_close(Window* win) {
@@ -207,6 +344,38 @@ void wm_restore(Window* win) {
     wm_focus(win);
 }
 
+void wm_unminimize(Window* win) {
+    if (!win) return;
+    win->minimized = false;
+    wm_focus(win);
+}
+
+void wm_focus_next(void) {
+    // Próximo slot ocupado depois do focado (com volta ao início). Se
+    // nada está focado (s_focused_idx == -1), começa do slot 0.
+    for (int step = 1; step <= MAX_WINDOWS; step++) {
+        int i = (s_focused_idx + step + MAX_WINDOWS) % MAX_WINDOWS;
+        Window* w = s_windows[i];
+        if (!w || !w->active || i == s_focused_idx) continue;
+        w->minimized = false;   // Alt+Tab também traz de volta uma minimizada
+        wm_focus(w);
+        return;
+    }
+}
+
+Window* wm_window_at(int32_t mx, int32_t my) {
+    if (s_focused_idx >= 0) {
+        Window* f = s_windows[s_focused_idx];
+        if (f && f->active && !f->minimized && in_window(f, mx, my)) return f;
+    }
+    for (int i = MAX_WINDOWS - 1; i >= 0; i--) {
+        Window* w = s_windows[i];
+        if (!w || !w->active || w->focused || w->minimized) continue;
+        if (in_window(w, mx, my)) return w;
+    }
+    return nullptr;
+}
+
 void wm_maximize_toggle(Window* win) {
     if (!win) return;
 
@@ -214,7 +383,10 @@ void wm_maximize_toggle(Window* win) {
         win->maximized = false;
         win->bounds = win->saved_bounds;
     } else {
-        win->saved_bounds = win->bounds;
+        // Janela encaixada já tem em saved_bounds o tamanho "normal";
+        // não sobrescrever com a metade da tela.
+        if (!win->snapped) win->saved_bounds = win->bounds;
+        win->snapped   = Window::SNAP_NONE;
         win->maximized = true;
         uint32_t sw = fb_width(), sh = fb_height();
         // Reserva espaço para a taskbar na parte inferior.
@@ -228,6 +400,7 @@ void wm_maximize_toggle(Window* win) {
 
 bool wm_mouse_down(int32_t mx, int32_t my) {
     for (int i = 0; i < MAX_WINDOWS; i++) s_content_mouse_down[i] = false;
+    s_snap_zone = SNAP_ZONE_NONE;
 
     // Testa a janela focada primeiro (ela está desenhada por cima,
     // então deve interceptar cliques antes de qualquer outra).
@@ -251,20 +424,17 @@ bool wm_mouse_down(int32_t mx, int32_t my) {
             if (in_max_btn(win, mx, my))   { wm_maximize_toggle(win); return true; }
             if (in_min_btn(win, mx, my))   { wm_minimize(win); return true; }
             if (in_titlebar(win, mx, my)) {
-                if (win->maximized) {
-                    // Arrastar a titlebar de uma janela maximizada a
-                    // desmaximiza primeiro (comportamento padrão em
-                    // Windows/GNOME), reposicionando sob o cursor.
-                    int32_t rel_x = mx - win->bounds.x;
-                    win->maximized = false;
-                    win->bounds.w  = win->saved_bounds.w;
-                    win->bounds.h  = win->saved_bounds.h;
-                    win->bounds.x  = mx - (int32_t)(rel_x * win->bounds.w / (fb_width()));
-                    win->on_resized();
+                // Duplo-clique na barra de título alterna maximizar/
+                // restaurar. Tem que ser decidido ANTES de soltar uma
+                // janela maximizada para arrastar (o que agora só
+                // acontece quando o mouse realmente se move — ver
+                // wm_mouse_move), senão o primeiro clique já a
+                // desmaximizaria e o segundo a maximizaria de novo.
+                if (title_double_click(win, mx, my)) {
+                    wm_maximize_toggle(win);
+                    return true;
                 }
-                win->dragging = true;
-                win->drag_ox  = mx - win->bounds.x;
-                win->drag_oy  = my - win->bounds.y;
+                begin_titlebar_drag(win, mx, my);
                 return true;
             }
             if (!win->minimized && in_content(win, mx, my)) {
@@ -293,14 +463,24 @@ bool wm_mouse_down(int32_t mx, int32_t my) {
             if (in_max_btn(win, mx, my))   { wm_maximize_toggle(win); return true; }
             if (in_min_btn(win, mx, my))   { wm_minimize(win); return true; }
             if (in_titlebar(win, mx, my)) {
-                win->dragging = true;
-                win->drag_ox  = mx - win->bounds.x;
-                win->drag_oy  = my - win->bounds.y;
+                if (title_double_click(win, mx, my)) wm_maximize_toggle(win);
+                else begin_titlebar_drag(win, mx, my);
             }
             return true;
         }
     }
     return false;
+}
+
+bool wm_mouse_right_down(int32_t mx, int32_t my) {
+    Window* win = wm_window_at(mx, my);
+    if (!win) return false;
+    if (!win->focused) wm_focus(win);
+    if (!win->minimized && in_content(win, mx, my)) {
+        WidgetEvent ev{EventType::MouseRightDown, mx, my, 0, 0};
+        win->on_event(ev);
+    }
+    return true;
 }
 
 void wm_mouse_move(int32_t mx, int32_t my) {
@@ -342,12 +522,38 @@ void wm_mouse_move(int32_t mx, int32_t my) {
             }
         }
 
+        win->snapped = Window::SNAP_NONE; // redimensionar à mão desfaz o encaixe
         win->bounds = r;
         win->on_resized();
         return;
     }
 
     if (win->dragging) {
+        // Janela maximizada ou encaixada: só "solta" do estado depois
+        // que o mouse realmente se moveu (>= 5 px desde o clique).
+        // wm_mouse_move roda a cada frame com o botão pressionado, mesmo
+        // sem movimento — soltar já no primeiro frame desmaximizaria a
+        // janela num simples clique e quebraria o duplo-clique.
+        if (win->maximized || win->snapped) {
+            int32_t dx = mx - s_press_x;
+            int32_t dy = my - s_press_y;
+            if (dx * dx + dy * dy < DRAG_START_DIST * DRAG_START_DIST) return;
+
+            int32_t old_w = (int32_t)win->bounds.w;
+            int32_t rel_x = win->drag_ox;   // onde, na barra, o usuário agarrou (definido no clique)
+            win->maximized = false;
+            win->snapped   = Window::SNAP_NONE;
+            win->bounds.w  = win->saved_bounds.w;
+            win->bounds.h  = win->saved_bounds.h;
+            // Mantém a MESMA proporção horizontal do cursor sobre a barra
+            // de título (agarrou no meio -> continua no meio).
+            win->bounds.x  = old_w > 0
+                ? mx - (int32_t)((int64_t)rel_x * (int64_t)win->bounds.w / old_w)
+                : mx;
+            win->drag_ox   = mx - win->bounds.x;
+            win->on_resized();
+        }
+
         win->bounds.x = mx - win->drag_ox;
         win->bounds.y = my - win->drag_oy;
         if (win->bounds.x < 0) win->bounds.x = 0;
@@ -357,6 +563,17 @@ void wm_mouse_move(int32_t mx, int32_t my) {
             win->bounds.x = sw - (int32_t)win->bounds.w;
         if (win->bounds.y + (int32_t)win->bounds.h > sh)
             win->bounds.y = sh - (int32_t)win->bounds.h;
+
+        // Cursor encostado numa borda da tela: ao soltar, a janela
+        // encaixa ali (wm_mouse_up). wm_draw_all mostra o contorno.
+        // Só conta depois de um arrasto de verdade (>= 5 px desde o
+        // clique): uma janela rente à borda recebe wm_mouse_move todo
+        // frame com o botão apertado, e um simples clique na titlebar
+        // (cursor a <= 2 px da borda) não pode virar um snap.
+        int32_t mdx = mx - s_press_x;
+        int32_t mdy = my - s_press_y;
+        bool dragged_far = mdx * mdx + mdy * mdy >= DRAG_START_DIST * DRAG_START_DIST;
+        s_snap_zone = dragged_far ? snap_zone_at(mx, my) : SNAP_ZONE_NONE;
         return;
     }
 
@@ -377,6 +594,12 @@ void wm_mouse_scroll(int32_t mx, int32_t my, int32_t amount) {
 }
 
 void wm_mouse_up(int32_t mx, int32_t my) {
+    // Soltou uma janela arrastada com o cursor numa borda: encaixa.
+    if (s_snap_zone != SNAP_ZONE_NONE) {
+        Window* dragged = wm_get_focused();
+        if (dragged && dragged->dragging) apply_snap(dragged, s_snap_zone);
+        s_snap_zone = SNAP_ZONE_NONE;
+    }
     for (int i = 0; i < MAX_WINDOWS; i++) {
         Window* win = s_windows[i];
         if (win && s_content_mouse_down[i]) {
@@ -415,6 +638,16 @@ void wm_draw_all(void) {
     }
     if (s_focused_idx >= 0 && s_windows[s_focused_idx] && s_windows[s_focused_idx]->active) {
         wm_draw_window(s_windows[s_focused_idx]);
+    }
+
+    // Contorno da área onde a janela arrastada vai encaixar ao soltar.
+    if (s_snap_zone != SNAP_ZONE_NONE) {
+        Window* dragged = wm_get_focused();
+        if (dragged && dragged->dragging) {
+            Rect r = snap_rect(s_snap_zone);
+            fb_draw_rect((uint32_t)r.x, (uint32_t)r.y, r.w, r.h,
+                         theme_current()->accent, 3);
+        }
     }
 }
 

@@ -1,6 +1,8 @@
 // drivers/mouse.c — driver PS/2 para mouse (IRQ12)
 #include "mouse.h"
 #include "../kernel/types.h"
+#include "../kernel/random.h"
+#include "xhci.h"
 
 // ---- Variáveis do ring-buffer preenchido pela ISR (idt_asm.asm) ----
 extern volatile uint8_t mouse_buf[32];  // ring buffer de bytes crus
@@ -68,6 +70,7 @@ static void mouse_process_byte(uint8_t b) {
         case 3:
             pkt[3] = b;
             pkt_phase = 0;
+            rng_add_event((uint32_t)pkt[1] | ((uint32_t)pkt[2] << 8));
 
             // Extrai botões
             btn_now = pkt[0] & 0x07;
@@ -133,7 +136,20 @@ void mouse_init(void) {
 
 // ---- Processamento do ring-buffer (polling) ---------------------
 
+// Movimento vindo do USB. dy > 0 = para BAIXO (como na tela); wheel > 0 = rolar para cima.
+void mouse_inject(int32_t dx, int32_t dy, uint8_t buttons, int32_t wheel) {
+    btn_now = buttons & 0x07;
+    scroll_now += wheel;
+    mx += dx;
+    my += dy;
+    if (mx < 0) mx = 0;
+    if (my < 0) my = 0;
+    if (mx > bounds_x) mx = bounds_x;
+    if (my > bounds_y) my = bounds_y;
+}
+
 void mouse_process(void) {
+    xhci_poll();    // eventos USB; no-op se não há xHCI
     // 1) Processa bytes do buffer da ISR (via IRQ12)
     while (mouse_tl != mouse_hd) {
         uint8_t b = mouse_buf[mouse_tl];

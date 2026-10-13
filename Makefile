@@ -5,6 +5,10 @@ LD       = $(CROSS)-ld
 NASM     = nasm
 GRUB     = grub-mkrescue
 
+# ── Flags extras opcionais para builds de debug/experimentação ───────────
+# Ex.: make all EXTRA_FLAGS=-DALGUMA_FLAG_DE_DEBUG
+EXTRA_FLAGS ?=
+
 # ── Auto-detecta wallpapers ───────────────────────────────────────────────
 WALLPAPER_SRCS := $(wildcard assets/wallpapers/wallpaper_*.c)
 WALLPAPER_OBJS := $(WALLPAPER_SRCS:.c=.o)
@@ -26,7 +30,8 @@ COMMON_FLAGS = \
     -I. -Ikernel -Idrivers -Igui -Ifs               \
     -Igui/screens -Igui/elements -Igui/apps         \
     -m64                                            \
-    $(WALLPAPER_FLAG)
+    $(WALLPAPER_FLAG)                               \
+    $(EXTRA_FLAGS)
 
 # ── Flags exclusivas de C ────────────────────────────────────────────────
 CFLAGS = $(COMMON_FLAGS) \
@@ -50,7 +55,8 @@ ASM_SRCS = boot/boot.asm          \
            kernel/idt_asm.asm     \
            kernel/isr_asm.asm     \
            kernel/usermode.asm    \
-           kernel/syscall_asm.asm
+           kernel/syscall_asm.asm \
+           kernel/task_switch.asm
 
 # ── Fontes C ──────────────────────────────────────────────────────────────
 C_SRCS   = kernel/kernel.c        \
@@ -60,19 +66,35 @@ C_SRCS   = kernel/kernel.c        \
            kernel/syscall.c       \
            kernel/pic.c           \
            kernel/pit.c           \
+           kernel/task.c          \
+           kernel/scheduler.c     \
+           kernel/process.c       \
            kernel/keyboard.c      \
            kernel/lang.c          \
+           kernel/sha256.c        \
+           kernel/random.c        \
+           kernel/acpi.c          \
+           kernel/clipboard.c     \
+           kernel/power.c         \
+           kernel/user.c          \
            drivers/fb.c           \
            drivers/utf8cp437.c    \
            drivers/font.c         \
            drivers/mouse.c        \
            drivers/rtc.c          \
            drivers/ata_pio.c      \
+           drivers/pci.c          \
+           drivers/ahci.c         \
+           drivers/partition.c    \
+           drivers/storage.c      \
+           drivers/xhci.c         \
+           drivers/usb_hid.c      \
            gui/screens/boot.c     \
            gui/elements/icons.c   \
            gui/wallpaper.c        \
            gui/apps/file_manager_fs.c \
            fs/vfs.c              \
+           fs/perm.c             \
            fs/haosfs.c
 
 # ── Fontes C++ ────────────────────────────────────────────────────────────
@@ -87,6 +109,7 @@ CXX_SRCS = kernel/memory.cpp      \
            gui/core/layout.cpp    \
            gui/core/window.cpp    \
            gui/core/wm.cpp        \
+           gui/core/userwin.cpp   \
            gui/widgets_basic.cpp  \
            gui/widgets_input.cpp  \
            gui/gui.cpp            \
@@ -96,8 +119,10 @@ CXX_SRCS = kernel/memory.cpp      \
            gui/apps/terminal.cpp  \
            gui/apps/editor.cpp    \
            gui/apps/file_manager.cpp \
+           gui/apps/applaunch.cpp \
            gui/elements/taskbar.cpp \
            gui/elements/startmenu.cpp \
+           gui/elements/menu.cpp \
            gui/sidebar_nav.cpp
 
 ASM_OBJS     = $(ASM_SRCS:.asm=.o)
@@ -105,9 +130,16 @@ C_OBJS       = $(C_SRCS:.c=.o)
 CXX_OBJS     = $(CXX_SRCS:.cpp=.o)
 OBJS         = $(ASM_OBJS) $(C_OBJS) $(CXX_OBJS) $(WALLPAPER_OBJS)
 
-.PHONY: all iso clean wallpapers
+.PHONY: all iso clean wallpapers apps
 
 all: haos.elf
+
+# ── Apps de usuário embutidos (winpaint, imgview) + imagens de exemplo ──
+# Gera kernel/generated/*.h. Requer o cross-compiler e python3.
+# Rode `make apps` uma vez (ou após mudar examples/ ou libc/) antes de `make`.
+apps:
+	bash tools/build_apps.sh
+	python3 tools/gen_samples.py
 
 # ── Regras de compilação ──────────────────────────────────────────────────
 %.o: %.asm
@@ -132,6 +164,7 @@ iso: haos.elf
 clean:
 	find . -name "*.o" -delete
 	rm -f haos.elf haos.iso iso/boot/haos.elf
+	rm -rf libc/build kernel/generated
 	@echo "  [OK] limpeza concluída"
 
 wallpapers:

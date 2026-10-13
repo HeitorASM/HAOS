@@ -85,7 +85,8 @@ EventResult Window::on_event(const WidgetEvent& ev) {
                     ev.type == EventType::MouseUp   ||
                     ev.type == EventType::MouseMove ||
                     ev.type == EventType::MouseDrag ||
-                    ev.type == EventType::MouseScroll;
+                    ev.type == EventType::MouseScroll ||
+                    ev.type == EventType::MouseRightDown;
 
     if (!is_mouse) {
         // KeyDown/Focus/Blur/Resize não carregam coordenadas de
@@ -93,7 +94,7 @@ EventResult Window::on_event(const WidgetEvent& ev) {
         return Container::on_event(ev);
     }
 
-    // Converte de absoluto-de-tela (como o WM em wm.cpp envia) para
+    // Converte de absoluto-de-tela (como o wm.cpp envia) para
     // relativo à própria janela — a partir daqui, toda a árvore de
     // widgets (Panel, VStack, Button...) trabalha de forma
     // consistente em coordenadas relativas ao pai imediato.
@@ -115,20 +116,38 @@ Rect Window::content_area_absolute() const {
 void Window::draw(int32_t ox, int32_t oy) {
     if (!active || minimized) return;
 
+    const Theme* t = theme_current();
+
     uint32_t x = (uint32_t)(ox + bounds.x);
     uint32_t y = (uint32_t)(oy + bounds.y);
     uint32_t w = bounds.w, h = bounds.h;
 
-    // --- Sombra (6px offset, stipple) ---
-    fb_draw_shadow(x + 6, y + 6, w, h);
+    // --- Sombra: opcional, controlada pelo tema ---
+    // Em temas "chapados" (Terminal), a sombra de stipple estoura
+    // o visual limpo, por isso virou opção independente.
+    if (t->window_shadow) {
+        fb_draw_shadow(x + 6, y + 6, w, h);
+    }
 
-    // --- Borda externa (arredondada, 1px) ---
+    // --- Borda externa: forma controlada pelo tema ---
+    // Se o tema pede cantos arredondados (window_rounded) E tem um
+    // raio > 0, desenha um retângulo arredondado PREENCHIDO na cor
+    // de borda (o conteúdo por cima cobre o miolo). Caso contrário,
+    // retângulo reto preenchido — mesma técnica, sem canto.
     uint32_t border_col = focused ? COLOR_WIN_BORDER_A : COLOR_WIN_BORDER;
-    fb_draw_rounded_rect(x, y, w, h, border_col, 6);
+    if (t->window_rounded && t->window_corner_radius > 0) {
+        fb_draw_rounded_rect(x, y, w, h, border_col, t->window_corner_radius);
+    } else {
+        fb_fill_rect(x, y, w, h, border_col);
+    }
 
-    // --- Barra de título: gradiente do azul escuro ao médio ---
-    uint32_t tc1 = focused ? 0x224A8C : 0x282838;
-    uint32_t tc2 = focused ? 0x102450 : 0x181828;
+    // --- Barra de título: cores do tema ---
+    // titlebar_bg / titlebar_bg_bottom definem o gradiente vertical
+    // quando a janela está focada; as variantes _unfocused são
+    // usadas caso contrário (mesmo esquema de Windows/GNOME).
+    uint32_t tc1 = focused ? t->titlebar_bg : t->titlebar_bg_unfocused;
+    uint32_t tc2 = focused ? t->titlebar_bg_bottom
+                           : t->titlebar_bg_unfocused_bottom;
     fb_fill_gradient_v(x + BORDER, y + BORDER,
                        w - BORDER * 2, TITLE_BAR_H, tc1, tc2);
 
@@ -137,7 +156,7 @@ void Window::draw(int32_t ox, int32_t oy) {
     fb_fill_rect(x + BORDER, y + BORDER, w - BORDER * 2, 1, shine);
 
     // --- Título ---
-    uint32_t title_col = focused ? COLOR_TEXT_LIGHT : COLOR_TEXT_GRAY;
+    uint32_t title_col = focused ? t->titlebar_fg : t->text_dim;
     uint32_t tx = x + BORDER + BTN_SIZE * 3 + BTN_GAP * 3 + 8;
     uint32_t ty = y + BORDER + (TITLE_BAR_H - FONT_H) / 2;
     uint32_t close_x = x + w - BORDER - BTN_SIZE - BTN_GAP;
@@ -184,7 +203,9 @@ void Window::draw(int32_t ox, int32_t oy) {
     uint32_t cy  = y + BORDER + TITLE_BAR_H + 1;
     uint32_t cw  = w - BORDER * 2;
     uint32_t ch  = h - BORDER - TITLE_BAR_H - 1;
-    uint32_t cbg = (type == WinType::Terminal) ? COLOR_TERM_BG : COLOR_WIN_BG;
+    // Terminal mantém o fundo preto fixo (é a "tela" do terminal);
+    // todo o resto usa o fundo do tema atual.
+    uint32_t cbg = (type == WinType::Terminal) ? COLOR_TERM_BG : t->window_bg;
     fb_fill_rect(x + BORDER, cy, cw, ch, cbg);
 
     // Widgets filhos (se algum foi adicionado via add()) desenhados
@@ -198,7 +219,7 @@ void Window::draw(int32_t ox, int32_t oy) {
     // usuário que a borda/canto pode ser arrastado para redimensionar.
     if (focused && !maximized) {
         uint32_t gx = x + w - 10, gy = y + h - 10;
-        uint32_t grip_col = 0x3A5AAA;
+        uint32_t grip_col = t->accent;
         for (int i = 0; i < 3; i++) {
             fb_fill_rect(gx + (uint32_t)(i * 3), gy + 8, 2, 2, grip_col);
             fb_fill_rect(gx + 8, gy + (uint32_t)(i * 3), 2, 2, grip_col);

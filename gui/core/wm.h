@@ -41,6 +41,24 @@ void    wm_minimize(Window* win);
 void    wm_restore(Window* win);     // desminimiza E desmaximiza
 void    wm_maximize_toggle(Window* win);
 
+// Tira a janela do estado minimizado e a foca, MANTENDO-A maximizada
+// se estava (wm_restore, por outro lado, também desmaximiza). É o que
+// o clique no item da taskbar usa: restaurar uma janela maximizada que
+// foi minimizada deve trazê-la de volta maximizada, como no Windows.
+void    wm_unminimize(Window* win);
+
+// Alt+Tab / Ctrl+Tab: foca a PRÓXIMA janela (na ordem dos slots do
+// WM), trazendo-a de volta se estiver minimizada. Não faz nada se
+// houver no máximo uma janela.
+void    wm_focus_next(void);
+
+// Janela visível mais ao topo do z-order que contém (mx, my), ou
+// nullptr se o ponto está sobre o desktop. Mesma ordem de teste de
+// wm_mouse_down (focada primeiro, depois as demais de trás para a
+// frente). Usado, por exemplo, para decidir se um clique direito caiu
+// no desktop (abre o menu de contexto) ou sobre uma janela.
+Window* wm_window_at(int32_t mx, int32_t my);
+
 // ---- Iteração de todas as janelas (para a taskbar listar todas,
 //      não só a focada) ----
 // Percorre os MAX_WINDOWS slots; retorna nullptr em slots vazios.
@@ -53,10 +71,50 @@ void    wm_draw_all(void);
 
 void    wm_dispatch_key(uint8_t c);
 
+// ============================================================
+//  Ações diferidas (deferred actions)
+// ============================================================
+//
+// PROBLEMA QUE ISTO RESOLVE: criar ou destruir uma janela DE DENTRO
+// de um handler de evento (ex.: o explorador de arquivos abrindo um
+// terminal ao receber um duplo-clique) modifica o array interno de
+// janelas do WM e o índice de foco EXATAMENTE enquanto wm_mouse_down()
+// / wm_dispatch_key() ainda estão no meio da iteração sobre esse
+// mesmo array — modificação de coleção durante iteração, com
+// resultado imprevisível (janela órfã, foco apontando para o índice
+// errado, ou travamento total do sistema).
+//
+// SOLUÇÃO: em vez de agir imediatamente, um handler de evento
+// registra o que quer fazer numa fila, e o WM executa essas ações
+// depois, num ponto seguro — quando nenhum despacho de evento está
+// em andamento (ver wm_run_deferred_actions, chamada pelo loop
+// principal do desktop a cada frame, entre o processamento de
+// entrada e o desenho).
+//
+// Registra uma função para ser executada no próximo ponto seguro.
+// `arg` é repassado tal e qual para ela. Retorna false se a fila
+// estiver cheia (nesse caso a ação NÃO será executada — quem chama
+// deve tratar isso, tipicamente mostrando uma mensagem de erro ao
+// usuário em vez de falhar silenciosamente).
+typedef void (*wm_deferred_fn)(void* arg);
+bool wm_defer(wm_deferred_fn fn, void* arg);
+
+// Executa e limpa todas as ações pendentes registradas por
+// wm_defer(). Deve ser chamada pelo loop principal APENAS quando
+// nenhum handler de evento está em execução. É seguro que uma ação
+// diferida registre outra ação diferida: a nova fica para a próxima
+// passagem, não é executada dentro desta (evita recursão infinita
+// se duas ações ficarem se re-registrando).
+void wm_run_deferred_actions(void);
+
 // Mouse events — retorna true se o evento foi consumido por
 // alguma janela (usado pelo desktop.cpp para decidir se o clique
 // "vazou" para ícones/taskbar por baixo).
 bool    wm_mouse_down(int32_t mx, int32_t my);
+// Clique DIREITO: foca a janela sob o cursor e, se caiu na área de conteúdo,
+// entrega EventType::MouseRightDown (coordenadas absolutas de tela, como no
+// MouseDown). true = havia uma janela ali (o clique foi consumido).
+bool    wm_mouse_right_down(int32_t mx, int32_t my);
 void    wm_mouse_move(int32_t mx, int32_t my);
 void    wm_mouse_scroll(int32_t mx, int32_t my, int32_t amount);
 void    wm_mouse_up(int32_t mx, int32_t my);

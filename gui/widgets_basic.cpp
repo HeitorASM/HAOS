@@ -24,8 +24,23 @@ void Button::draw(int32_t ox, int32_t oy) {
                             : t->button_bg;
     uint32_t border = (focused || m_active_style) ? t->button_border_focused : t->button_border;
 
-    fb_fill_rect((uint32_t)ax, (uint32_t)ay, bounds.w, bounds.h, bg);
-    fb_draw_rect((uint32_t)ax, (uint32_t)ay, bounds.w, bounds.h, border, 1);
+    if (t->buttons_rounded && t->button_corner_radius > 0 && bounds.w > 2 && bounds.h > 2) {
+        // Desenha um retângulo arredondado preenchido na cor de borda,
+        // depois um menor por dentro na cor de fundo. Isso gera o
+        // efeito de "borda arredondada com miolo preenchido" sem
+        // precisar de uma primitiva de contorno arredondado.
+        uint32_t r  = t->button_corner_radius;
+        // Raio interno um pouco menor para caber dentro do externo.
+        uint32_t r2 = (r > 1) ? (r - 1) : 0;
+        fb_draw_rounded_rect((uint32_t)ax, (uint32_t)ay,
+                             bounds.w, bounds.h, border, r);
+        fb_draw_rounded_rect((uint32_t)(ax + 1), (uint32_t)(ay + 1),
+                             bounds.w - 2, bounds.h - 2, bg, r2);
+    } else {
+        fb_fill_rect((uint32_t)ax, (uint32_t)ay, bounds.w, bounds.h, bg);
+        fb_draw_rect((uint32_t)ax, (uint32_t)ay, bounds.w, bounds.h, border, 1);
+    }
+
     fb_draw_string_centered((uint32_t)ax, (uint32_t)ay, bounds.w, bounds.h,
                             m_label, t->button_fg, 0, true);
 }
@@ -170,14 +185,19 @@ int ScrollBar::thumb_offset() const {
 }
 
 void ScrollBar::draw(int32_t ox, int32_t oy) {
+    const Theme* t = theme_current();
     int32_t ax = ox + bounds.x;
     int32_t ay = oy + bounds.y;
-    fb_fill_rect((uint32_t)ax, (uint32_t)ay, bounds.w, bounds.h, 0x101C34);
+
+    // Track escuro (mantém contraste com o polegar) e polegar usando
+    // a cor de borda de botão do tema — assim o scrollbar muda de
+    // tom junto com o resto dos controles.
+    fb_fill_rect((uint32_t)ax, (uint32_t)ay, bounds.w, bounds.h, t->listview_bg);
     if (m_max_value <= 0) return;
 
     int thumb = thumb_size();
     fb_fill_rect((uint32_t)ax, (uint32_t)(ay + thumb_offset()), bounds.w,
-                 (uint32_t)thumb, 0x3A66A8);
+                 (uint32_t)thumb, t->button_bg_pressed);
 }
 
 void ScrollBar::update_from_y(int y) {

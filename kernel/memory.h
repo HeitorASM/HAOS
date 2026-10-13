@@ -36,6 +36,22 @@ size_t kstrlen(const char* s);
 char*  kstrcpy(char* dst, const char* src);
 char*  kstrncpy(char* dst, const char* src, size_t n);
 char*  kstrcat(char* dst, const char* src);
+
+// Concatena `src` ao final de `dst`, mas NUNCA escreve além de
+// `dst_size` bytes no total (incluindo o terminador '\0'), truncando
+// `src` se necessário. Sempre deixa `dst` terminado em '\0' (desde
+// que dst_size > 0).
+//
+// Diferente de kstrcat(), que assume cegamente que o destino tem
+// espaço suficiente: usar kstrcat() com dados de tamanho
+// imprevisível (nomes de arquivo, caminhos absolutos, entrada do
+// usuário) é um estouro de buffer esperando para acontecer — foi
+// exatamente essa a causa de travamentos aleatórios ao executar um
+// .hexec pelo explorador de arquivos, onde um caminho absoluto de
+// até 512 bytes era concatenado num buffer de 81. Prefira SEMPRE
+// esta função quando o tamanho da origem não for uma constante
+// conhecida em tempo de compilação.
+char*  kstrncat(char* dst, const char* src, size_t dst_size);
 void   kitoa(int64_t n, char* buf);
 void   kuitoa(uint64_t n, char* buf);
 void   kuitoa_hex(uint64_t n, char* buf);

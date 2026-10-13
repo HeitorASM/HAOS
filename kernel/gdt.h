@@ -39,6 +39,20 @@ void gdt_init(void);
 // única vez em gdt_init() com a stack de boot do kernel.
 void tss_set_kernel_stack(uint64_t rsp0);
 
+// Devolve o topo da pilha de kernel inicial de boot (kernel_stack +
+// KERNEL_STACK_SIZE, em gdt.c) — a mesma usada como RSP0 inicial em
+// gdt_init(). Usada por kernel_main (kernel.c) para dar um valor
+// seguro e não-nulo a current_syscall_stack_top (ver
+// kernel/syscall_asm.asm) ANTES de qualquer processo de usuário
+// existir, para que "mov rsp, [current_syscall_stack_top]" em
+// syscall_entry nunca leia um ponteiro nulo nessa janela inicial —
+// mesmo sabendo que, na prática, syscall_entry só é alcançável a
+// partir de Ring 3, e portanto só depois que algum processo de
+// usuário já tiver rodado pelo menos uma troca de contexto (que já
+// configura esse valor corretamente por si só). Defesa extra, não
+// um caminho esperado de uso.
+uint64_t gdt_get_initial_kernel_stack_top(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,7 +1,31 @@
 #include "vfs.h"
 #include "../kernel/memory.h"
 #include "haosfs.h"
-#include "../drivers/ata_pio.h"
+#include "../drivers/storage.h"
+
+// Os apps embutidos só entram se o header GERADO existir — ele é criado por
+// `bash tools/build_apps.sh` (ou `make apps`). Assim o kernel compila
+// mesmo antes de os apps terem sido gerados.
+#if defined(__has_include)
+#  if __has_include("../kernel/generated/winpaint_hexec_data.h")
+#    include "../kernel/generated/winpaint_hexec_data.h"
+#    define HAVE_WINPAINT_HEXEC 1
+#  endif
+#  if __has_include("../kernel/generated/imgview_hexec_data.h")
+#    include "../kernel/generated/imgview_hexec_data.h"
+#    define HAVE_IMGVIEW_HEXEC 1
+#  endif
+// uidemo é só um exemplo da UI: NÃO é embutido por padrão. Para incluí-lo,
+// rode `bash tools/build_apps.sh winpaint imgview uidemo` antes do make.
+#  if __has_include("../kernel/generated/uidemo_hexec_data.h")
+#    include "../kernel/generated/uidemo_hexec_data.h"
+#    define HAVE_UIDEMO_HEXEC 1
+#  endif
+#  if __has_include("../kernel/generated/samples_data.h")
+#    include "../kernel/generated/samples_data.h"
+#    define HAVE_SAMPLE_IMAGES 1
+#  endif
+#endif
 // Sistema de arquivos virtual que roda na RAM do OS.
 // Arquivos crescem dinamicamente (dobra de capacidade) até VFS_FILE_MAX,
 // e diretórios suportam até VFS_MAX_CHILDREN itens.
@@ -13,9 +37,31 @@ static VfsNode* g_root = NULL;
 static VfsNode* g_cwd  = NULL;
 static bool g_persistent = false;
 
+static int  g_batch_depth = 0;
+static bool g_batch_dirty = false;
+
 static bool vfs_persist(void) {
     if (!g_persistent) return true;
-    return haosfs_save(ata_pio_device(), g_root);
+    if (g_batch_depth > 0) { g_batch_dirty = true; return true; }
+    return haosfs_save(storage_device(), g_root);
+}
+
+void vfs_batch_begin(void) { g_batch_depth++; }
+
+bool vfs_batch_end(void) {
+    if (g_batch_depth > 0) g_batch_depth--;
+    if (g_batch_depth == 0 && g_batch_dirty) {
+        g_batch_dirty = false;
+        return g_persistent ? haosfs_save(storage_device(), g_root) : true;
+    }
+    return true;
+}
+
+void vfs_set_owner(VfsNode* node, uint32_t uid, uint32_t gid, uint16_t mode) {
+    if (!node) return;
+    node->uid  = uid;
+    node->gid  = gid;
+    node->mode = (uint16_t)(mode & VFS_MODE_MASK);
 }
 
 // ---- Helpers internos ---------------------------------------
@@ -23,12 +69,25 @@ static bool vfs_persist(void) {
 static VfsNode* vfs_alloc_node(const char* name, VfsType type) {
     VfsNode* n = (VfsNode*)kzalloc(sizeof(VfsNode));
     if (!n) return NULL;
-    kstrcpy(n->name, name);
+    // Cópia LIMITADA: `name` pode vir de um processo de usuário (sys_open
+    // com O_CREAT, sys_mkdir) e ter até centenas de bytes — um kstrcpy
+    // sem limite estourava `name[VFS_NAME_MAX]` e sobrescrevia type,
+    // size e o ponteiro `data` do próprio nó (escrita arbitrária no
+    // kernel a partir de Ring 3). kzalloc já zerou o nó, então o
+    // último byte de `name` continua '\0'. Os chamadores públicos
+    // (vfs_mkdir/vfs_touch) já rejeitam nomes longos; isto é a
+    // segunda camada de defesa.
+    kstrncpy(n->name, name, VFS_NAME_MAX - 1);
     n->type = type;
     n->size = 0;
     n->capacity = 0;
     n->data = NULL;
     n->fs_inode = 0;
+    // Padrão: dono root. Código que age em nome de um usuário usa
+    // vfs_mkdir_as/vfs_touch_as (fs/perm.h), que ajustam o dono.
+    n->uid  = 0;
+    n->gid  = 0;
+    n->mode = (type == VFS_DIR) ? VFS_MODE_DIR_DEFAULT : VFS_MODE_FILE_DEFAULT;
     n->parent = NULL;
     n->child_count = 0;
     return n;
@@ -45,27 +104,144 @@ static bool vfs_add_child(VfsNode* parent, VfsNode* child) {
 
 // ---- API pública --------------------------------------------
 
+// ---- Executáveis embutidos em /bin ---------------------------
+//
+// Cada entrada vem de um header GERADO (kernel/generated/*_hexec_data.h
+// — artefato de build criado por tools/embed_hexec.py a partir de um
+// .hexec; nunca edite esses .h à mão: edite examples/<nome>/main.c e
+// regenere, ver libc/README.md). Escritos byte a byte via
+// vfs_ensure_capacity + kmemcpy (não vfs_write, que corta no primeiro
+// '\0' — inaceitável para código de máquina). Rode com
+// "run <nome>.hexec" no terminal.
+//
+//   winpaint  — pintura (janela gráfica Ring 3, SYS_WIN_*)
+//   imgview   — visualizador de imagens PNG/BMP
+//   uidemo    — demo opcional do toolkit de UI (fora do padrão)
+// Todos só entram se o header gerado existir.
+typedef struct {
+    const char*          name;
+    const unsigned char* data;
+    uint32_t             size;
+} BuiltinBin;
+
+static const BuiltinBin g_builtin_bins[] = {
+#ifdef HAVE_WINPAINT_HEXEC
+    { "winpaint.hexec", winpaint_hexec_data, WINPAINT_HEXEC_SIZE },
+#endif
+#ifdef HAVE_IMGVIEW_HEXEC
+    { "imgview.hexec", imgview_hexec_data, IMGVIEW_HEXEC_SIZE },
+#endif
+#ifdef HAVE_UIDEMO_HEXEC
+    { "uidemo.hexec", uidemo_hexec_data, UIDEMO_HEXEC_SIZE },
+#endif
+};
+
+static bool bytes_equal(const void* a, const void* b, uint32_t n) {
+    const unsigned char* x = (const unsigned char*)a;
+    const unsigned char* y = (const unsigned char*)b;
+    for (uint32_t i = 0; i < n; i++) if (x[i] != y[i]) return false;
+    return true;
+}
+
+// Instala os executáveis embutidos em `bin`, criando os que faltam e
+// SUBSTITUINDO os que existem com conteúdo diferente (versão nova do
+// kernel); os que já estão idênticos não são tocados. Retorna true se
+// algo foi escrito (quem chama decide quando gravar no disco).
+//
+// Sem isto, um programa embutido novo só apareceria em discos
+// formatados DEPOIS dele existir: vfs_create_defaults só roda na
+// primeira formatação, e um disco já montado nunca recebia /bin
+// novos nem versões corrigidas dos antigos. Consequência: qualquer
+// edição manual em /bin/<nome embutido>.hexec é sobrescrita no boot —
+// use outro nome (ou outro diretório) para programas seus.
+static bool vfs_install_builtin_bins(VfsNode* bin) {
+    bool changed = false;
+    for (uint32_t i = 0; i < sizeof(g_builtin_bins) / sizeof(g_builtin_bins[0]); i++) {
+        const BuiltinBin* b = &g_builtin_bins[i];
+        VfsNode* f = vfs_find_child(bin, b->name);
+        if (f && f->type != VFS_FILE) continue; // há um diretório com esse nome: não mexe
+        if (f && f->size == b->size && f->data && bytes_equal(f->data, b->data, b->size)) continue;
+        if (!f) f = vfs_touch(bin, b->name);
+        if (!f || !vfs_ensure_capacity(f, b->size)) continue;
+        kmemcpy(f->data, b->data, b->size);
+        f->size = b->size;
+        changed = true;
+    }
+    return changed;
+}
+
+// Imagens de exemplo em /share/images (geradas por tools/gen_samples.py).
+// Mesma política dos executáveis: cria o que falta e restaura o que foi alterado.
+static bool vfs_install_builtin_samples(VfsNode* root) {
+#ifdef HAVE_SAMPLE_IMAGES
+    bool changed = false;
+    VfsNode* share = vfs_find_child(root, "share");
+    if (!share) {
+        share = vfs_mkdir(root, "share");
+        if (!share) return false;
+        vfs_set_owner(share, 0, 0, VFS_MODE_DIR_DEFAULT);
+        changed = true;
+    }
+    if (share->type != VFS_DIR) return changed;
+    VfsNode* images = vfs_find_child(share, "images");
+    if (!images) {
+        images = vfs_mkdir(share, "images");
+        if (!images) return changed;
+        vfs_set_owner(images, 0, 0, VFS_MODE_DIR_DEFAULT);
+        changed = true;
+    }
+    if (images->type != VFS_DIR) return changed;
+
+    for (uint32_t i = 0; i < sizeof(g_sample_files) / sizeof(g_sample_files[0]); i++) {
+        const SampleFile* sf = &g_sample_files[i];
+        VfsNode* f = vfs_find_child(images, sf->name);
+        if (f && f->type != VFS_FILE) continue;
+        if (f && f->size == sf->size && f->data && bytes_equal(f->data, sf->data, sf->size)) continue;
+        if (!f) f = vfs_touch(images, sf->name);
+        if (!f || !vfs_ensure_capacity(f, sf->size)) continue;
+        kmemcpy(f->data, sf->data, sf->size);
+        f->size = sf->size;
+        changed = true;
+    }
+    return changed;
+#else
+    (void)root;
+    return false;
+#endif
+}
+
 static void vfs_create_defaults(void) {
     VfsNode* bin  = vfs_mkdir(g_root, "bin");
     VfsNode* home = vfs_mkdir(g_root, "home");
     VfsNode* etc  = vfs_mkdir(g_root, "etc");
     VfsNode* tmp  = vfs_mkdir(g_root, "tmp");
 
-    (void)bin; (void)tmp;
+    (void)home;
 
-    // /home/user
-    VfsNode* user = vfs_mkdir(home, "user");
+    // Todos os diretórios de sistema são de root. /tmp é gravável por
+    // todos (0777) com o bit "sticky" (01000): cada usuário só consegue
+    // remover os PRÓPRIOS arquivos lá. Cada usuário ganha o seu
+    // /home/<nome> quando a conta é criada (kernel/user.c).
+    vfs_set_owner(g_root, 0, 0, VFS_MODE_DIR_DEFAULT);
+    vfs_set_owner(bin,    0, 0, VFS_MODE_DIR_DEFAULT);
+    vfs_set_owner(etc,    0, 0, VFS_MODE_DIR_DEFAULT);
+    vfs_set_owner(tmp,    0, 0, 0777 | VFS_MODE_STICKY);
+
+    // Executáveis embutidos no kernel (ver g_builtin_bins acima).
+    vfs_install_builtin_bins(bin);
+
+    // Imagens de exemplo (/share/images) — numa gravação só.
+    vfs_batch_begin();
+    vfs_install_builtin_samples(g_root);
+    vfs_batch_end();
 
     // /etc/haos.conf
     VfsNode* conf = vfs_touch(etc, "haos.conf");
     vfs_write(conf, "# HAOS configuracao\nversion=1.1\ntheme=dark\n");
 
-    // /home/user/README.txt
-    VfsNode* readme = vfs_touch(user, "README.txt");
-    vfs_write(readme, "Bem-vindo ao HAOS!\nUse 'help' para ver os comandos.\n");
-
-    // CWD inicial: /home/user
-    g_cwd = user;
+    // Sem usuário ainda: o CWD inicial é a raiz. O login define o CWD
+    // como a home do usuário que entrar.
+    g_cwd = g_root;
 }
 
 void vfs_init(void) {
@@ -73,12 +249,26 @@ void vfs_init(void) {
     g_root = vfs_alloc_node("/", VFS_DIR);
     g_cwd  = g_root;
 
-    BlockDevice* device = ata_pio_device();
+    BlockDevice* device = storage_device();
     HaosFsProbe probe = haosfs_probe(device);
     if (probe == HAOSFS_VALID && haosfs_mount(device, g_root)) {
+        // Atualiza /bin com os executáveis embutidos nesta versão do
+        // kernel ANTES de ligar a persistência: vfs_touch/vfs_mkdir
+        // gravam o FS INTEIRO a cada chamada quando g_persistent está
+        // ligado — com a persistência desligada fazemos todas as
+        // mudanças em RAM e gravamos UMA vez no fim, e só se algo
+        // mudou (o caso comum, boot sem novidades, não escreve nada).
+        VfsNode* bin = vfs_find_child(g_root, "bin");
+        if (!bin) bin = vfs_mkdir(g_root, "bin");
+        bool changed = (bin && bin->type == VFS_DIR) && vfs_install_builtin_bins(bin);
+        bool samples_changed = vfs_install_builtin_samples(g_root);
+        changed = changed || samples_changed;
+
         g_persistent = true;
-        VfsNode* user = vfs_resolve(g_root, "/home/user");
-        if (user && user->type == VFS_DIR) g_cwd = user;
+        if (changed) vfs_persist();
+        // O diretório de trabalho inicial é a raiz; quem define o cwd real é
+        // session_start() (kernel/user.c), que usa a home do usuário que entrou.
+        g_cwd = g_root;
         return;
     }
 
@@ -145,6 +335,7 @@ VfsNode* vfs_resolve(VfsNode* base, const char* path) {
 
 VfsNode* vfs_mkdir(VfsNode* parent, const char* name) {
     if (!parent || !name || !name[0]) return NULL;
+    if (kstrlen(name) >= VFS_NAME_MAX) return NULL; // nome longo demais
     if (parent->type != VFS_DIR) return NULL;
     if (vfs_find_child(parent, name)) return NULL; // já existe
 
@@ -157,6 +348,7 @@ VfsNode* vfs_mkdir(VfsNode* parent, const char* name) {
 
 VfsNode* vfs_touch(VfsNode* parent, const char* name) {
     if (!parent || !name || !name[0]) return NULL;
+    if (kstrlen(name) >= VFS_NAME_MAX) return NULL; // nome longo demais
     if (parent->type != VFS_DIR) return NULL;
 
     // Se já existe e é arquivo, retorna ele
@@ -247,6 +439,19 @@ static bool vfs_remove_node(VfsNode* node) {
         kfree(node->data);
         node->data = NULL;
     }
+
+    // Deixa o nó num estado "tombstone" consistente. O nó em si não
+    // é liberado (limitação conhecida do VFS — ver comentário no topo
+    // do arquivo), então ponteiros antigos para ele (fd_table de
+    // processos com o arquivo aberto) continuam apontando para
+    // memória válida. Antes, `data` virava NULL mas `size` e
+    // `capacity` ficavam com os valores antigos — um sys_read num fd
+    // ainda aberto calcularia `node->data + offset` com data == NULL
+    // e leria memória baixa do kernel. Agora size/capacity zeram e o
+    // flag `removed` permite às syscalls recusarem o acesso.
+    node->size     = 0;
+    node->capacity = 0;
+    node->removed  = true;
     return true;
 }
 
@@ -257,6 +462,95 @@ bool vfs_rm(VfsNode* node) {
 
 bool vfs_sync(void) {
     return vfs_persist();
+}
+
+// ---- Renomear / mover / copiar ----------------------------------
+bool vfs_name_valid(const char* name) {
+    if (!name || !name[0]) return false;
+    if (kstrlen(name) >= VFS_NAME_MAX) return false;
+    if (kstrcmp(name, ".") == 0 || kstrcmp(name, "..") == 0) return false;
+    for (const char* p = name; *p; p++)
+        if (*p == '/') return false;
+    return true;
+}
+
+// `anc` é `n` ou algum ancestral de `n`?
+static bool vfs_is_ancestor_or_self(const VfsNode* anc, const VfsNode* n) {
+    for (; n; n = n->parent)
+        if (n == anc) return true;
+    return false;
+}
+
+bool vfs_rename(VfsNode* node, VfsNode* new_parent, const char* new_name) {
+    if (!node || node->removed || !node->parent || node == g_root) return false;
+    if (!new_parent || new_parent->removed || new_parent->type != VFS_DIR) return false;
+    if (!vfs_name_valid(new_name)) return false;
+    if (vfs_is_ancestor_or_self(node, new_parent)) return false;   // pasta dentro de si mesma
+
+    VfsNode* existing = vfs_find_child(new_parent, new_name);
+    if (existing && existing != node) return false;                // não sobrescreve
+
+    VfsNode* old_parent = node->parent;
+    if (old_parent != new_parent) {
+        if (new_parent->child_count >= VFS_MAX_CHILDREN) return false;
+        for (uint32_t i = 0; i < old_parent->child_count; i++) {
+            if (old_parent->children[i] == node) {
+                for (uint32_t j = i; j + 1 < old_parent->child_count; j++)
+                    old_parent->children[j] = old_parent->children[j + 1];
+                old_parent->children[--old_parent->child_count] = NULL;
+                break;
+            }
+        }
+        new_parent->children[new_parent->child_count++] = node;
+        node->parent = new_parent;
+    }
+    kmemset(node->name, 0, sizeof(node->name));
+    kstrncpy(node->name, new_name, VFS_NAME_MAX - 1);
+    return vfs_persist();
+}
+
+// Copia recursiva. `depth` limita a recursão (árvores absurdamente profundas).
+static VfsNode* copy_tree(const VfsNode* src, VfsNode* dst_parent, const char* name, uint32_t depth) {
+    if (depth > 32) return NULL;
+    VfsNode* n;
+    if (src->type == VFS_DIR) {
+        n = vfs_mkdir(dst_parent, name);
+        if (!n) return NULL;
+        for (uint32_t i = 0; i < src->child_count; i++) {
+            const VfsNode* ch = src->children[i];
+            if (ch->removed) continue;
+            if (!copy_tree(ch, n, ch->name, depth + 1)) return NULL;
+        }
+    } else {
+        n = vfs_touch(dst_parent, name);
+        if (!n) return NULL;
+        if (src->size > 0) {
+            if (!vfs_ensure_capacity(n, src->size + 1)) return NULL;
+            kmemcpy(n->data, src->data, src->size);
+            n->data[src->size] = 0;
+            n->size = src->size;
+        }
+    }
+    n->uid = src->uid;
+    n->gid = src->gid;
+    n->mode = src->mode;
+    return n;
+}
+
+VfsNode* vfs_copy(const VfsNode* src, VfsNode* dst_parent, const char* dst_name) {
+    if (!src || src->removed || !dst_parent || dst_parent->removed) return NULL;
+    if (dst_parent->type != VFS_DIR || !vfs_name_valid(dst_name)) return NULL;
+    if (vfs_find_child(dst_parent, dst_name)) return NULL;                 // não sobrescreve
+    if (src->type == VFS_DIR && vfs_is_ancestor_or_self(src, dst_parent)) return NULL;
+
+    vfs_batch_begin();
+    VfsNode* n = copy_tree(src, dst_parent, dst_name, 0);
+    if (!n) {                                                              // desfaz o parcial
+        VfsNode* partial = vfs_find_child(dst_parent, dst_name);
+        if (partial) vfs_remove_node(partial);
+    }
+    vfs_batch_end();
+    return n;
 }
 
 void vfs_path_of(VfsNode* node, char* buf, size_t bufsz) {
@@ -270,12 +564,21 @@ void vfs_path_of(VfsNode* node, char* buf, size_t bufsz) {
     while (cur && cur != g_root) {
         char seg[VFS_NAME_MAX + 2];
         seg[0] = '/';
-        kstrcpy(seg + 1, cur->name);
-        // Prepend seg to tmp
+        kstrncpy(seg + 1, cur->name, sizeof(seg) - 1);
+        seg[sizeof(seg) - 1] = '\0';
+        // Prepend seg to tmp — com limite em ambas as cópias: uma
+        // hierarquia de diretórios suficientemente profunda faria o
+        // caminho acumulado passar de 512 bytes, estourando `tmp` (e
+        // `old`) sem nenhum aviso. Com kstrncat o caminho é truncado
+        // em vez de corromper a pilha; truncar é o comportamento
+        // correto aqui, já que quem chama passa um `bufsz` próprio e
+        // já espera um resultado possivelmente cortado.
         char old[512];
-        kstrcpy(old, tmp);
-        kstrcpy(tmp, seg);
-        kstrcat(tmp, old);
+        kstrncpy(old, tmp, sizeof(old));
+        old[sizeof(old) - 1] = '\0';
+        kstrncpy(tmp, seg, sizeof(tmp));
+        tmp[sizeof(tmp) - 1] = '\0';
+        kstrncat(tmp, old, sizeof(tmp));
         cur = cur->parent;
     }
     if (!tmp[0]) { tmp[0] = '/'; tmp[1] = 0; }

@@ -1,26 +1,21 @@
 // gui/screens/login.cpp — Tela de login
 //
-// Substitui a antiga draw_welcome_screen() (puramente decorativa,
-// sem estado nem interação real além de "aperte ENTER ou espere 5s").
-// Esta tela:
-//   - Lê /etc/user.cfg no VFS para saber se já existe um usuário
-//     configurado (fluxo de "bem-vindo de volta").
-//   - Primeiro boot: pede um nome e, em seguida, oferece criar uma
-//     senha opcional (com botão "Não quero senha" — não é obrigatório
-//     ter senha nesta v1).
-//   - Se o usuário configurou senha, reinicializações seguintes pedem
-//     a senha antes de entrar.
-//   - Mostra o wallpaper atual no fundo (wallpaper_draw), em vez do
-//     gradiente fixo da welcome screen antiga.
-//   - Usa o sistema de Widget/Container real (TextField + Button)
-//     em vez de desenho manual.
+// Autentica contra o banco de usuários do kernel (kernel/user.h,
+// /etc/passwd): senhas com salt + PBKDF2-HMAC-SHA256. Esta tela só cuida
+// da interface; quem sabe criar contas, conferir senhas e iniciar a sessão
+// é kernel/user.c.
 //
-// Propositalmente simples: o "hash" de senha aqui é um FNV-1a de 32
-// bits, só para não gravar a senha em texto puro à toa — NÃO é
-// segurança de verdade (sem salt, sem verificação de força, sem
-// proteção contra quem tem acesso físico ao disco). Adequado para
-// uma v1 single-user sem isolamento de processo; deve ser revisto
-// quando houver multiusuário real 
+// Fluxos:
+//   - Nenhuma conta (primeiro boot): pede um nome e uma senha OPCIONAL e
+//     cria a primeira conta, que é ADMINISTRADORA. Entra direto.
+//   - Uma conta: mostra "bem-vindo de volta" (com senha, se houver).
+//   - Várias contas: pergunta primeiro o nome de usuário, depois a senha.
+//   - Senha errada: mensagem no lugar do texto do prompt + 1 s de espera
+//     (somado ao custo do PBKDF2, freia tentativas por força bruta).
+//   - Mostra o wallpaper atual no fundo e usa o sistema de Widget/Container.
+//
+// Contas antigas (/etc/user.cfg + hash FNV-1a) são migradas por
+// user_init() e o hash fraco é trocado no primeiro login.
 
 #include "login.h"
 #include "../core/container.h"
@@ -35,6 +30,7 @@
 #include "../../kernel/memory.h"
 #include "../../kernel/lang.h"
 #include "../../fs/vfs.h"
+#include "../../kernel/user.h"
 
 extern "C" volatile uint64_t timer_ticks;
 
@@ -46,137 +42,8 @@ extern "C" volatile uint64_t timer_ticks;
 #define LANG_SWITCH_Y   16
 #define LOGIN_FOOTER_H  32
 
-// ---- Hash simples (FNV-1a 32-bit) -------------------------------
-// Só para não gravar a senha em claro no disco — ver aviso acima.
-static uint32_t fnv1a_hash(const char* s) {
-    uint32_t h = 2166136261u;
-    while (*s) {
-        h ^= (uint8_t)(*s++);
-        h *= 16777619u;
-    }
-    return h;
-}
-
-static void hash_to_hex(uint32_t h, char* out /* buf[9] */) {
-    static const char* digits = "0123456789abcdef";
-    for (int i = 7; i >= 0; i--) {
-        out[i] = digits[h & 0xF];
-        h >>= 4;
-    }
-    out[8] = '\0';
-}
-
-// ---- Estado carregado de /etc/user.cfg --------------------------
-struct UserConfig {
-    bool has_user     = false;
-    bool has_password = false;
-    char name[NAME_MAX + 1] = {0};
-    char password_hash_hex[9] = {0}; // 32 bits em hex = 8 chars + '\0'
-};
-
-// Formato de /etc/user.cfg, uma diretiva por linha:
-//   name=<nome>
-//   pwhash=<8 hex chars>       (linha omitida se não há senha)
-static VfsNode* ensure_etc_dir() {
-    VfsNode* root = vfs_root();
-    VfsNode* etc  = vfs_find_child(root, "etc");
-    if (!etc) etc = vfs_mkdir(root, "etc");
-    return etc;
-}
-
-static bool line_starts_with(const char* data, uint32_t size, uint32_t pos,
-                              const char* prefix) {
-    uint32_t plen = (uint32_t)kstrlen(prefix);
-    if (pos + plen > size) return false;
-    for (uint32_t i = 0; i < plen; i++) {
-        if (data[pos + i] != prefix[i]) return false;
-    }
-    return true;
-}
-
-static uint32_t read_line_value(const char* data, uint32_t size, uint32_t pos,
-                                 char* out, size_t out_sz) {
-    uint32_t j = 0;
-    while (pos < size && data[pos] != '\n' && data[pos] != '\0' &&
-           j < out_sz - 1) {
-        out[j++] = data[pos++];
-    }
-    out[j] = '\0';
-    // Avança até depois do '\n', se houver, para o chamador continuar
-    // do início da próxima linha.
-    while (pos < size && data[pos] != '\n') pos++;
-    if (pos < size) pos++;
-    return pos;
-}
-
-static UserConfig load_user_config() {
-    UserConfig cfg;
-    VfsNode* etc = ensure_etc_dir();
-    if (!etc) return cfg;
-    VfsNode* node = vfs_find_child(etc, "user.cfg");
-    if (!node || !node->data || node->size == 0) return cfg;
-
-    uint32_t pos = 0;
-    while (pos < node->size) {
-        if (line_starts_with(node->data, node->size, pos, "name=")) {
-            pos = read_line_value(node->data, node->size, pos + 5,
-                                   cfg.name, sizeof(cfg.name));
-            cfg.has_user = cfg.name[0] != '\0';
-        } else if (line_starts_with(node->data, node->size, pos, "pwhash=")) {
-            char buf[16];
-            pos = read_line_value(node->data, node->size, pos + 7,
-                                   buf, sizeof(buf));
-            kstrncpy(cfg.password_hash_hex, buf, sizeof(cfg.password_hash_hex) - 1);
-            cfg.has_password = cfg.password_hash_hex[0] != '\0';
-        } else {
-            // Linha desconhecida/futura — pula até o próximo '\n'.
-            while (pos < node->size && node->data[pos] != '\n') pos++;
-            if (pos < node->size) pos++;
-        }
-    }
-    return cfg;
-}
-
-// Grava nome + (opcionalmente) hash de senha em /etc/user.cfg.
-// password pode ser nullptr/"" — nesse caso nenhuma linha pwhash= é
-// escrita, e o próximo boot não pede senha.
-static void save_user_config(const char* name, const char* password) {
-    VfsNode* etc = ensure_etc_dir();
-    if (!etc) return;
-    VfsNode* node = vfs_find_child(etc, "user.cfg");
-    if (!node) node = vfs_touch(etc, "user.cfg");
-    if (!node) return;
-
-    char buf[192];
-    uint32_t i = 0;
-    const char* p1 = "name=";
-    while (p1[i] && i < sizeof(buf)) { buf[i] = p1[i]; i++; }
-    uint32_t j = 0;
-    while (name[j] && i < sizeof(buf) - 2) { buf[i++] = name[j++]; }
-    buf[i++] = '\n';
-
-    if (password && password[0] != '\0') {
-        char hex[9];
-        hash_to_hex(fnv1a_hash(password), hex);
-        const char* p2 = "pwhash=";
-        uint32_t k = 0;
-        while (p2[k] && i < sizeof(buf) - 10) { buf[i++] = p2[k++]; }
-        uint32_t m = 0;
-        while (hex[m] && i < sizeof(buf) - 2) { buf[i++] = hex[m++]; }
-        buf[i++] = '\n';
-    }
-    buf[i] = '\0';
-
-    vfs_write(node, buf);
-}
-
 // ---- UI --------------------------------------------------------
-// Três telas possíveis, controladas por m_stage:
-//   NAME      — primeiro boot, passo 1: pedir nome
-//   PASSWORD  — primeiro boot, passo 2: criar senha (ou pular)
-//   ENTER_PW  — usuário já existe E tem senha: pedir a senha
-//   WELCOME   — usuário já existe e não tem senha: só confirmar
-enum class LoginStage { NAME, PASSWORD, ENTER_PW, WELCOME };
+enum class LoginStage { NAME, PASSWORD, ENTER_PW, WELCOME, USERNAME };
 
 static void on_primary_clicked(Button* self);
 static void on_skip_password_clicked(Button* self);
@@ -187,26 +54,41 @@ static bool language_switch_contains(uint32_t sw, int32_t mx, int32_t my) {
            my >= LANG_SWITCH_Y && my < LANG_SWITCH_Y + LANG_SWITCH_H;
 }
 
+// Antes esta função tinha todas as cores hardcoded (azul escuro fixo)
+// — em Retro e Algodão Doce o botão ficava com contraste ruim. Agora
+// lê tudo do tema, então cada preset decide como o seletor se parece.
 static void draw_language_switch(uint32_t sw, bool hovered, bool pressed) {
+    const Theme* t = theme_current();
+
     int32_t x = (int32_t)sw - LANG_SWITCH_W - 18;
-    uint32_t bg = pressed ? 0x315E9A : hovered ? 0x284D80 : 0x172B4D;
+    uint32_t bg = pressed ? t->login_lang_bg_pressed
+                : hovered ? t->login_lang_bg_hover
+                          : t->login_lang_bg;
     fb_draw_rounded_rect(x, LANG_SWITCH_Y, LANG_SWITCH_W, LANG_SWITCH_H, bg, 6);
     fb_draw_rect((uint32_t)x, LANG_SWITCH_Y, LANG_SWITCH_W, LANG_SWITCH_H,
-                 0x5D8FD5, 1);
+                 t->login_lang_border, 1);
     fb_draw_string((uint32_t)(x + 10), LANG_SWITCH_Y + 7,
-                   tr(STR_CONFIG_LANGUAGE), 0xD5E7FF, 0, true);
+                   tr(STR_CONFIG_LANGUAGE), t->login_lang_text, 0, true);
+
     int32_t options_x = x + 76;
     bool pt_active = lang_get() == LANG_PT;
-    fb_draw_string((uint32_t)options_x, LANG_SWITCH_Y + 7, "PT", 
-                   pt_active ? 0xFFFFFF : 0x8FA8C8, 0, true);
+    fb_draw_string((uint32_t)options_x, LANG_SWITCH_Y + 7, "PT",
+                   pt_active ? t->login_lang_text_active
+                             : t->login_lang_text_inactive, 0, true);
     fb_draw_string((uint32_t)(options_x + 30), LANG_SWITCH_Y + 7, "EN",
-                   pt_active ? 0x8FA8C8 : 0xFFFFFF, 0, true);
+                   pt_active ? t->login_lang_text_inactive
+                             : t->login_lang_text_active, 0, true);
 }
 
+// Faixa inferior que cobre a área reservada da taskbar (wallpaper_draw
+// reserva essa faixa mas o desktop ainda não existe durante o login).
+// Agora usa as cores do tema — sem isso, Retro ficava com uma faixa
+// escura embaixo e o resto azul, e Candy com uma faixa cinza-azulada.
 static void draw_login_footer(uint32_t sw, uint32_t sh) {
+    const Theme* t = theme_current();
     uint32_t y = sh > LOGIN_FOOTER_H ? sh - LOGIN_FOOTER_H : 0;
-    fb_fill_rect(0, y, sw, LOGIN_FOOTER_H, COLOR_TASKBAR_BG);
-    fb_fill_rect(0, y, sw, 1, COLOR_TASKBAR_LINE);
+    fb_fill_rect(0, y, sw, LOGIN_FOOTER_H, t->login_footer_bg);
+    fb_fill_rect(0, y, sw, 1, t->login_footer_line);
 }
 
 class LoginCard : public Container {
@@ -219,12 +101,31 @@ public:
         build_for_stage(stage, w);
     }
 
+    // Reconstrói o card na etapa `next`, opcionalmente com uma mensagem de
+    // erro (que SUBSTITUI o texto do prompt — não adiciona um label novo,
+    // para a altura do card não mudar).
+    void show_stage(LoginStage next, uint32_t w, const char* error) {
+        kstrncpy(m_error, error ? error : "", sizeof(m_error) - 1);
+        m_error[sizeof(m_error) - 1] = '\0';
+        advance_to(next, w);
+    }
+
+    void set_known_name(const char* name) {
+        kstrncpy(m_known_name, name, sizeof(m_known_name) - 1);
+        m_known_name[sizeof(m_known_name) - 1] = '\0';
+    }
+
     void draw(int32_t ox, int32_t oy) override {
         const Theme* t = theme_current();
         int32_t ax = ox + bounds.x, ay = oy + bounds.y;
 
-        fb_draw_shadow(ax + 6, ay + 8, bounds.w, bounds.h);
-        fb_draw_rounded_rect(ax - 2, ay - 2, bounds.w + 4, bounds.h + 4, 0x14264A, 12);
+        if (t->window_shadow) {
+            fb_draw_shadow(ax + 6, ay + 8, bounds.w, bounds.h);
+        }
+        // "Anel" externo (halo) agora usa a cor de borda do tema —
+        // em Retro ele fica azul XP, em Candy rosa, etc.
+        fb_draw_rounded_rect(ax - 2, ay - 2, bounds.w + 4, bounds.h + 4,
+                             t->login_card_border, 12);
         fb_draw_rounded_rect(ax, ay, bounds.w, bounds.h, t->panel_bg, 10);
 
         fb_draw_string_centered(ax, ay + 16, bounds.w, 20,
@@ -237,16 +138,10 @@ public:
     const char* name_field_text() const { return m_name_field ? m_name_field->text() : m_known_name; }
     const char* password_field_text() const { return m_pw_field ? m_pw_field->text() : ""; }
 
-    // Reconstrói a tela para o próximo estágio (chamado quando o
-    // usuário avança do passo "nome" para o passo "senha", ou quando
-    // uma senha errada precisa ser digitada de novo). Limpa todos os
-    // widgets do estágio anterior antes de construir os novos —
-    // sem isso, os widgets antigos continuariam na lista, recebendo
-    // eventos e sendo desenhados por baixo/por cima dos novos.
     void advance_to(LoginStage next, uint32_t w) {
         m_stage = next;
         m_children.clear();
-        m_focused_child = nullptr; // protected em Container, acessível aqui via herança
+        m_focused_child = nullptr;
         m_name_field = nullptr;
         m_pw_field   = nullptr;
         m_primary_button = nullptr;
@@ -280,6 +175,7 @@ private:
     TextField* m_name_field     = nullptr;
     TextField* m_pw_field       = nullptr;
     char       m_known_name[NAME_MAX + 1] = {0};
+    char       m_error[96] = {0};
 
     void build_for_stage(LoginStage stage, uint32_t w) {
         VStack* stack = new VStack(24, 56, w - 48);
@@ -287,8 +183,18 @@ private:
         switch (stage) {
             case LoginStage::NAME:
                 stack->add(new Label(0, 0, tr(STR_LOGIN_FIRST_BOOT_TITLE)));
-                stack->add(new Label(0, 0, tr(STR_LOGIN_NAME_PROMPT)));
+                stack->add(new Label(0, 0, m_error[0] ? m_error : tr(STR_LOGIN_NAME_PROMPT)));
                 m_name_field = new TextField(0, 0, w - 48, 28, tr(STR_LOGIN_NAME_PLACEHOLDER));
+                stack->add(m_name_field);
+                m_primary_button = new Button(0, 0, w - 48, 34, tr(STR_LOGIN_NEXT_BTN));
+                m_primary_button->set_on_click(on_primary_clicked);
+                stack->add(m_primary_button);
+                break;
+
+            case LoginStage::USERNAME:
+                stack->add(new Label(0, 0, tr(STR_LOGIN_USER_TITLE)));
+                stack->add(new Label(0, 0, m_error[0] ? m_error : tr(STR_LOGIN_USER_PROMPT)));
+                m_name_field = new TextField(0, 0, w - 48, 28, tr(STR_LOGIN_USER_PLACEHOLDER));
                 stack->add(m_name_field);
                 m_primary_button = new Button(0, 0, w - 48, 34, tr(STR_LOGIN_NEXT_BTN));
                 m_primary_button->set_on_click(on_primary_clicked);
@@ -312,7 +218,7 @@ private:
             case LoginStage::ENTER_PW:
                 stack->add(new Label(0, 0, tr(STR_LOGIN_WELCOME_BACK)));
                 stack->add(new Label(0, 0, m_known_name));
-                stack->add(new Label(0, 0, tr(STR_LOGIN_PASSWORD_PROMPT_ENTER)));
+                stack->add(new Label(0, 0, m_error[0] ? m_error : tr(STR_LOGIN_PASSWORD_PROMPT_ENTER)));
                 m_pw_field = new TextField(0, 0, w - 48, 28, tr(STR_LOGIN_PASSWORD_PLACEHOLDER_ENTER));
                 m_pw_field->set_password_mode(true);
                 stack->add(m_pw_field);
@@ -343,7 +249,8 @@ static bool        s_language_hovered = false;
 static bool        s_language_pressed = false;
 
 static void on_primary_clicked(Button* /*self*/) {
-    if (s_card && s_card->stage() == LoginStage::NAME) {
+    if (s_card && (s_card->stage() == LoginStage::NAME ||
+                   s_card->stage() == LoginStage::USERNAME)) {
         s_advance_requested = true;
     } else {
         s_entered = true;
@@ -355,9 +262,6 @@ static void on_skip_password_clicked(Button* /*self*/) {
     s_entered = true;
 }
 
-// Roda o loop de eventos até s_entered (ou até um botão pedir avanço
-// de estágio, tratado pelo chamador). Devolve o motivo da saída via
-// as flags globais acima, que o chamador reseta a cada estágio.
 static void run_stage_loop(uint32_t sw, uint32_t sh) {
     bool was_pressed = false;
     while (!s_entered && !s_advance_requested) {
@@ -411,10 +315,7 @@ static void run_stage_loop(uint32_t sw, uint32_t sh) {
             }
         }
 
-        wallpaper_draw(sw, sh); // fundo real do desktop, não mais um gradiente fixo
-        // wallpaper_draw reserva a faixa inferior para a taskbar. Durante
-        // o login não há taskbar, então ela precisa ser redesenhada a cada
-        // frame para não deixar rastros do cursor.
+        wallpaper_draw(sw, sh);
         draw_login_footer(sw, sh);
         s_card->draw(0, 0);
         draw_language_switch(sw, s_language_hovered, s_language_pressed);
@@ -426,82 +327,178 @@ static void run_stage_loop(uint32_t sw, uint32_t sh) {
 }
 
 extern "C" const char* login_get_current_username(void) {
-    static char cached_name[NAME_MAX + 1] = {0};
-    UserConfig cfg = load_user_config();
-    if (cfg.has_user) {
-        kstrncpy(cached_name, cfg.name, sizeof(cached_name) - 1);
-    } else {
-        cached_name[0] = '\0';
+    return session_username();
+}
+
+static char lower_ascii(char c) { return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c; }
+
+// Procura uma conta que PODE entrar (não é root/travada) ignorando
+// maiúsculas/minúsculas — digitar "ANA" para a conta "ana" funciona.
+// Retorna nullptr se não existir; *locked = true se existe mas não entra.
+static const UserEntry* find_login_user(const char* name, bool* locked) {
+    *locked = false;
+    for (uint32_t i = 0; i < user_total(); i++) {
+        const UserEntry* u = user_at(i);
+        if (!u) continue;
+        const char* a = u->name;
+        const char* b = name;
+        while (*a && *b && lower_ascii(*a) == lower_ascii(*b)) { a++; b++; }
+        if (*a || *b) continue;
+        if (u->uid == UID_ROOT || (u->flags & USER_FLAG_LOCKED)) { *locked = true; return nullptr; }
+        return u;
     }
-    return cached_name;
+    return nullptr;
+}
+
+static const UserEntry* first_regular_user() {
+    for (uint32_t i = 0; i < user_total(); i++) {
+        const UserEntry* u = user_at(i);
+        if (u && u->uid != UID_ROOT && !(u->flags & USER_FLAG_LOCKED)) return u;
+    }
+    return nullptr;
+}
+
+static void reset_flags() {
+    s_entered = false;
+    s_advance_requested = false;
+    s_skip_password_requested = false;
+}
+
+// 1 s de espera após uma senha errada (timer_ticks roda a 100 Hz).
+static void wrong_password_penalty() {
+    uint64_t until = timer_ticks + 100;
+    while (timer_ticks < until) __asm__("pause");
+}
+
+// Primeiro boot: cria a primeira conta (administradora).
+static const UserEntry* run_first_boot(uint32_t sw, uint32_t sh, int32_t cx, int32_t cy) {
+    const char* error = "";
+    while (true) {
+        reset_flags();
+        s_card = new LoginCard(cx, cy, CARD_W, CARD_H, LoginStage::NAME, "");
+        s_card->show_stage(LoginStage::NAME, CARD_W, error);
+        run_stage_loop(sw, sh);
+
+        char typed_name[NAME_MAX + 1] = {0};
+        kstrncpy(typed_name, s_card->name_field_text(), sizeof(typed_name) - 1);
+        user_sanitize_name(typed_name);
+        if (typed_name[0] == '\0') {
+            kstrncpy(typed_name, tr(STR_LOGIN_DEFAULT_USER), sizeof(typed_name) - 1);
+            user_sanitize_name(typed_name);
+        }
+
+        reset_flags();
+        s_card->show_stage(LoginStage::PASSWORD, CARD_W, "");
+        run_stage_loop(sw, sh);
+
+        char password[PASSWORD_MAX + 1] = {0};
+        if (!s_skip_password_requested)
+            kstrncpy(password, s_card->password_field_text(), sizeof(password) - 1);
+
+        delete s_card;
+        s_card = nullptr;
+
+        int r = user_create(typed_name, password, 1u);
+        kmemset(password, 0, sizeof(password));
+        if (r == USER_OK) {
+            const UserEntry* u = user_find(typed_name);
+            if (u) return u;
+        }
+        error = tr(STR_LOGIN_CREATE_FAILED);
+    }
 }
 
 void run_login_screen(void) {
     uint32_t sw = fb_width(), sh = fb_height();
-    UserConfig cfg = load_user_config();
+
+    user_init();   // carrega /etc/passwd (migra o formato antigo, se houver)
 
     int32_t cx = (int32_t)((sw - CARD_W) / 2);
     int32_t cy = (int32_t)((sh - CARD_H) / 2);
 
-    char typed_name[NAME_MAX + 1] = {0};
+    const UserEntry* account = nullptr;
 
-    if (!cfg.has_user) {
-        // ---- Primeiro boot: passo 1, nome ----
-        s_entered = false; s_advance_requested = false; s_skip_password_requested = false;
-        s_card = new LoginCard(cx, cy, CARD_W, CARD_H, LoginStage::NAME, "");
-        run_stage_loop(sw, sh);
-
-        const char* n = s_card->name_field_text();
-        if (n[0] != '\0') {
-            kstrncpy(typed_name, n, sizeof(typed_name) - 1);
-        } else {
-            kstrncpy(typed_name, tr(STR_LOGIN_DEFAULT_USER), sizeof(typed_name) - 1);
-        }
-
-        // ---- Primeiro boot: passo 2, senha opcional ----
-        s_entered = false; s_advance_requested = false; s_skip_password_requested = false;
-        s_card->advance_to(LoginStage::PASSWORD, CARD_W);
-        run_stage_loop(sw, sh);
-
-        if (s_skip_password_requested) {
-            save_user_config(typed_name, nullptr);
-        } else {
-            save_user_config(typed_name, s_card->password_field_text());
-        }
-
-        delete s_card;
-        s_card = nullptr;
-        return;
-    }
-
-    // ---- Usuário já configurado ----
-    if (cfg.has_password) {
-        s_entered = false; s_advance_requested = false;
-        s_card = new LoginCard(cx, cy, CARD_W, CARD_H, LoginStage::ENTER_PW, cfg.name);
-
-        // Repete a tela até a senha bater — sem limite de tentativas
-        // nesta v1 (não há bloqueio de conta/lockout ainda).
-        while (true) {
-            run_stage_loop(sw, sh);
-            char hex[9];
-            hash_to_hex(fnv1a_hash(s_card->password_field_text()), hex);
-            bool ok = kstrlen(hex) == kstrlen(cfg.password_hash_hex);
-            if (ok) {
-                for (uint32_t i = 0; hex[i]; i++) {
-                    if (hex[i] != cfg.password_hash_hex[i]) { ok = false; break; }
-                }
-            }
-            if (ok) break;
-            s_entered = false;
-            s_card->advance_to(LoginStage::ENTER_PW, CARD_W);
-        }
+    if (user_regular_count() == 0) {
+        account = run_first_boot(sw, sh, cx, cy);
     } else {
-        s_entered = false; s_advance_requested = false;
-        s_card = new LoginCard(cx, cy, CARD_W, CARD_H, LoginStage::WELCOME, cfg.name);
-        run_stage_loop(sw, sh);
+        // Conta única: vai direto. Várias: pergunta o nome primeiro.
+        account = (user_regular_count() == 1) ? first_regular_user() : nullptr;
+        const char* error = "";
+
+        while (true) {
+            if (!account) {
+                reset_flags();
+                s_card = new LoginCard(cx, cy, CARD_W, CARD_H, LoginStage::USERNAME, "");
+                s_card->show_stage(LoginStage::USERNAME, CARD_W, error);
+                run_stage_loop(sw, sh);
+
+                bool locked = false;
+                char typed[USER_NAME_MAX];
+                kstrncpy(typed, s_card->name_field_text(), sizeof(typed) - 1);
+                typed[sizeof(typed) - 1] = '\0';
+                account = find_login_user(typed, &locked);
+                delete s_card;
+                s_card = nullptr;
+                if (!account && locked) {
+                    error = tr(STR_LOGIN_ACCOUNT_LOCKED);
+                    continue;
+                }
+                if (!account) {
+                    // Nome inexistente: finge que existe — pede a senha, gasta
+                    // o mesmo tempo e dá a MESMA mensagem de senha errada, para
+                    // não revelar quais contas existem.
+                    reset_flags();
+                    s_card = new LoginCard(cx, cy, CARD_W, CARD_H, LoginStage::ENTER_PW, typed);
+                    s_card->show_stage(LoginStage::ENTER_PW, CARD_W, "");
+                    run_stage_loop(sw, sh);
+                    user_verify(typed, s_card->password_field_text(), nullptr);  // inexistente: só gasta o tempo
+                    delete s_card;
+                    s_card = nullptr;
+                    wrong_password_penalty();
+                    error = tr(STR_LOGIN_BAD_PASSWORD);
+                    continue;
+                }
+                error = "";
+            }
+
+            if (user_has_password(account)) {
+                reset_flags();
+                s_card = new LoginCard(cx, cy, CARD_W, CARD_H, LoginStage::ENTER_PW, account->name);
+                s_card->show_stage(LoginStage::ENTER_PW, CARD_W, error);
+                run_stage_loop(sw, sh);
+
+                const UserEntry* verified = nullptr;
+                int r = user_verify(account->name, s_card->password_field_text(), &verified);
+                delete s_card;
+                s_card = nullptr;
+
+                if (r == USER_OK && verified) { account = verified; break; }
+                if (r == USER_ERR_THROTTLED) {
+                    error = tr(STR_LOGIN_THROTTLED);
+                } else {
+                    wrong_password_penalty();
+                    error = tr(STR_LOGIN_BAD_PASSWORD);
+                }
+                // Com várias contas volta a pedir o nome; com uma só, só a senha.
+                if (user_regular_count() > 1) account = nullptr;
+                continue;
+            }
+
+            // Sem senha: tela de boas-vindas e entra.
+            reset_flags();
+            s_card = new LoginCard(cx, cy, CARD_W, CARD_H, LoginStage::WELCOME, account->name);
+            run_stage_loop(sw, sh);
+            delete s_card;
+            s_card = nullptr;
+
+            const UserEntry* verified = nullptr;
+            if (user_verify(account->name, "", &verified) == USER_OK && verified) {
+                account = verified;
+                break;
+            }
+            account = nullptr;   // inesperado (conta mudou?): recomeça
+        }
     }
 
-    delete s_card;
-    s_card = nullptr;
+    session_start(account);
 }
-

@@ -19,6 +19,9 @@ typedef BlockStatus (*BlockReadFn)(BlockDevice* device, uint64_t lba,
 typedef BlockStatus (*BlockWriteFn)(BlockDevice* device, uint64_t lba,
                                     uint32_t count, const void* buffer);
 
+// Força o cache de escrita do disco para a mídia (NULL = não suportado).
+typedef BlockStatus (*BlockFlushFn)(BlockDevice* device);
+
 struct BlockDevice {
     uint32_t sector_size;
     uint64_t sector_count;
@@ -26,4 +29,5 @@ struct BlockDevice {
     BlockReadFn read;
     BlockWriteFn write;
     void* driver_data;
+    BlockFlushFn flush;   // pode ser NULL
 };

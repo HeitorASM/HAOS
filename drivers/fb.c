@@ -206,6 +206,21 @@ void fb_draw_char(uint32_t x, uint32_t y, uint8_t c,
     }
 }
 
+void fb_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+             const uint32_t* src, uint32_t src_stride) {
+    uint32_t* buf = fb_target();
+    if (!buf || !src) return;
+    if (x >= fb_w || y >= fb_h) return;
+    if (w > fb_w - x) w = fb_w - x;   // recorta nas bordas da tela
+    if (h > fb_h - y) h = fb_h - y;
+
+    for (uint32_t row = 0; row < h; row++) {
+        uint32_t* dst = (uint32_t*)((uint8_t*)buf + (uint64_t)(y + row) * fb_pitch) + x;
+        const uint32_t* s = src + (uint64_t)row * src_stride;
+        for (uint32_t col = 0; col < w; col++) dst[col] = s[col];
+    }
+}
+
 uint32_t fb_text_width(const char* s) {
     uint32_t n = 0;
     const char* p = s;

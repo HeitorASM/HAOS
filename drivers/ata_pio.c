@@ -21,8 +21,19 @@
 #define ATA_STATUS_DF  0x20
 #define ATA_STATUS_BSY 0x80
 
+#define ATA_CMD_FLUSH     0xE7
+
 #define ATA_LBA28_MAX 0x10000000ULL
 #define ATA_TIMEOUT_TICKS 50000000ULL
+
+// "rep insw/outsw": UMA instrução move o setor inteiro (256 palavras). Antes
+// eram 256 inw/outw separados — em VM, cada um é uma saída para o host.
+static inline void ata_insw(uint16_t port, void* dst, uint32_t words) {
+    __asm__ volatile ("rep insw" : "+D"(dst), "+c"(words) : "d"(port) : "memory");
+}
+static inline void ata_outsw(uint16_t port, const void* src, uint32_t words) {
+    __asm__ volatile ("rep outsw" : "+S"(src), "+c"(words) : "d"(port) : "memory");
+}
 
 static BlockDevice g_device;
 static bool g_available;
@@ -93,15 +104,13 @@ static BlockStatus ata_transfer(BlockDevice* device, uint64_t lba,
         if (status != BLOCK_OK) return status;
 
         if (write) {
-            for (uint32_t word = 0; word < BLOCK_SECTOR_SIZE / 2; word++)
-                outw(ATA_DATA, words[word]);
+            ata_outsw(ATA_DATA, words, BLOCK_SECTOR_SIZE / 2);
             status = ata_wait_not_busy();
             if (status != BLOCK_OK) return status;
             if (ata_status() & (ATA_STATUS_ERR | ATA_STATUS_DF))
                 return BLOCK_ERR_IO;
         } else {
-            for (uint32_t word = 0; word < BLOCK_SECTOR_SIZE / 2; word++)
-                words[word] = inw(ATA_DATA);
+            ata_insw(ATA_DATA, words, BLOCK_SECTOR_SIZE / 2);
         }
 
         words += BLOCK_SECTOR_SIZE / 2;
@@ -120,6 +129,17 @@ static BlockStatus ata_write(BlockDevice* device, uint64_t lba,
     return ata_transfer(device, lba, count, (void*)buffer, true);
 }
 
+static BlockStatus ata_flush(BlockDevice* device) {
+    if (!device || !device->ready) return BLOCK_ERR_INVALID;
+    BlockStatus status = ata_wait_not_busy();
+    if (status != BLOCK_OK) return status;
+    ata_select(0);
+    outb(ATA_COMMAND, ATA_CMD_FLUSH);
+    status = ata_wait_not_busy();
+    if (status != BLOCK_OK) return status;
+    return (ata_status() & (ATA_STATUS_ERR | ATA_STATUS_DF)) ? BLOCK_ERR_IO : BLOCK_OK;
+}
+
 bool ata_pio_init(void) {
     g_available = false;
     g_device.ready = false;
@@ -127,6 +147,7 @@ bool ata_pio_init(void) {
     g_device.sector_count = 0;
     g_device.read = ata_read;
     g_device.write = ata_write;
+    g_device.flush = ata_flush;
     g_device.driver_data = NULL;
 
     outb(ATA_CONTROL, 0x02);

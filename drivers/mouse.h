@@ -9,6 +9,9 @@ extern "C" {
 // Inicializa o mouse PS/2 (habilita porta auxiliar + reporting)
 void    mouse_init(void);
 
+// Movimento injetado pelo driver USB
+void    mouse_inject(int32_t dx, int32_t dy, uint8_t buttons, int32_t wheel);
+
 // Processa bytes pendentes do FIFO de ISR (chamar no loop principal)
 void    mouse_process(void);
 

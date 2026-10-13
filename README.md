@@ -37,12 +37,16 @@ O HAOS é um sistema operacional bare-metal de 64 bits desenvolvido de forma ind
 - **Armazenamento ATA/IDE:** Leitura e escrita PIO em setores de 512 bytes, com identificação LBA28, polling, timeout e tratamento de erros.
 
 ### Interface Gráfica (GUI)
-- **Gerenciador de Janelas (WM):** Sistema de janelas com foco, arraste pelo título, minimização, fechamento e ordem de empilhamento.
+- **Gerenciador de Janelas (WM):** Sistema de janelas com foco, arraste pelo título, minimização, maximização, redimensionamento pelas bordas, fechamento e ordem de empilhamento. Duplo clique na barra de título maximiza/restaura; arrastar a barra até a borda esquerda/direita encaixa a janela na metade da tela (com contorno de pré-visualização) e até a borda superior a maximiza; arrastar uma janela maximizada ou encaixada a "solta" no tamanho original.
 - **Widgets OOP (C++):** Hierarquia orientada a objetos com `Widget` (base abstrata), `Button`, `Label` e `Window` (contêiner).
 - **Desktop com Ícones:** Atalhos clicáveis para Terminal, Sobre, Configurações, Bloco de Notas e Explorador de Arquivos.
 - **Taskbar:** Barra de tarefas com botão Iniciar, clock em tempo real e indicador da janela ativa.
 - **Menu Iniciar:** Menu pop-up com acesso a aplicativos e opção de reinicialização.
-- **Explorador de Arquivos:** Navegação pela árvore VFS, retorno ao diretório pai ou à raiz, seleção de itens e abertura de arquivos textuais no Bloco de Notas por duplo clique.
+- **Menus popup (`gui/elements/menu.*`):** API genérica com itens, separadores, marcador "marcado", atalhos e **submenus**, navegável por mouse e teclado (setas, Enter, Esc). O botão direito no desktop abre Terminal, Arquivos, Editor, **Papel de parede ▸** e **Tema ▸** (troca na hora, com o atual marcado), Configurações e Sobre.
+- **Janelas para programas Ring 3 (`SYS_WIN_*`):** Um `.hexec` pode criar janelas (`win_create`), desenhar num canvas próprio (retângulos, texto com a fonte do sistema, blit de pixels) e receber teclado/mouse/redimensionamento como eventos (`win_event`), usando a API de `libc/include/haos/gfx.h`. A janela se integra ao WM (foco, mover, redimensionar, maximizar, snap, Alt+Tab) e é fechada automaticamente se o processo morrer. Exemplo: `examples/winpaint/`.
+- **Explorador de Arquivos:** Navegação pela árvore VFS, rolagem (roda do mouse, setas), seleção e abertura por duplo clique (texto no Bloco de Notas, `.hexec` no terminal). **Botão direito** abre o menu de contexto: Abrir, Copiar, Recortar, Colar, Renomear (no próprio nome da lista), Excluir (com confirmação), Propriedades e, na área vazia, Nova pasta e Novo arquivo de texto. Atalhos: `F2`, `Del`, `Ctrl+C/X/V`. Tudo respeita o dono e as permissões da conta logada.
+- **Base para apps de usuário (`libc`):** renderizador por software (`haos/draw.h`: formas, cantos arredondados, texto com a fonte do kernel, blit com alfa; **um** syscall por quadro), tema do sistema (`haos/uitheme.h` + evento `HAOS_EV_THEME`), título da janela, **área de transferência de texto do sistema** (compartilhada com o Editor) e fonte exposta ao app. Sobre ela, o **toolkit de widgets** (`haos/ui.h`): layout automático, rótulo, botão, caixa de seleção, opções, campo de texto, lista, deslizante, barra de progresso, timer e diálogos modais — tudo com o tema do sistema. Demo opcional em `examples/uidemo` (não embutida por padrão). Ver [docs/UI.md](docs/UI.md).
+- **Visualizador de imagens (`imgview`):** programa `.hexec` que abre **PNG e BMP** (zoom, ajuste à janela, mover, próxima/anterior imagem da pasta, transparência sobre xadrez). O Explorador o lança ao abrir uma imagem, e `w` (ou botão direito → *Definir como papel de parede*) usa a imagem como **papel de parede persistente**, escalada sem distorcer. O Explorador mostra ícones por tipo de arquivo. Ver [docs/IMAGENS.md](docs/IMAGENS.md).
 - **Sistema de Wallpaper:** Suporte a gradiente padrão ou imagens convertidas, com três modos de exibição — Preencher, Centralizar e Lado a lado.
 - **Cursor de Mouse:** Cursor renderizado em hardware com atualização por frame.
 - **Limitador de FPS:** Renderização limitada a ~50 fps via tick do PIT.
@@ -133,8 +137,15 @@ Após converter, adicione os arquivos `.c` gerados ao `Makefile` em `WALLPAPER_S
 | Tecla | Ação |
 | --- | --- |
 | `ESC` | Fechar o menu ativo ou a janela focada |
+| `Alt+Tab` / `Ctrl+Tab` | Alternar para a próxima janela (traz de volta uma minimizada) |
+| `Alt+F4` | Fechar a janela em foco |
 | `Backspace` | Voltar ao diretório pai no Explorador |
+| `F2` / `Del` / `Ctrl+C` `Ctrl+X` `Ctrl+V` | Renomear, excluir, copiar, recortar e colar no Explorador |
+| **Botão direito** (Explorador) | Menu de contexto do item ou da área vazia |
 | **Mouse** | Abrir aplicativos pelo desktop/Menu Iniciar, selecionar itens, navegar no Explorador e focar/arrastar janelas |
+| **Botão direito** (desktop) | Menu de contexto: apps, papel de parede e tema (submenus), configurações |
+| **Duplo clique** (barra de título) | Maximizar / restaurar a janela |
+| **Arrastar até a borda** | Esquerda/direita: encaixa na metade da tela; topo: maximiza |
 
 O Explorador também possui os botões `Voltar` e `Início`. O duplo clique em um
 arquivo textual abre o conteúdo no Bloco de Notas; arquivos com byte nulo são
@@ -185,6 +196,22 @@ tratados como binários e não são abertos pelo editor.
 | `stat <arq>` | Exibe metadados do nó VFS |
 | `rm <nome>` | Remove arquivo ou diretório |
 | `edit <nome>` | Abre o Bloco de Notas com o arquivo |
+| `ls -l [dir]` | Lista com permissões e dono |
+
+### Usuários e permissões
+
+| Comando | Descrição |
+| --- | --- |
+| `whoami` / `id` | Usuário atual / uid, gid e privilégios |
+| `users` | Lista as contas |
+| `adduser <nome> [admin]` | Cria conta (só administrador; senha mascarada) |
+| `deluser <nome>` | Remove conta (só administrador) |
+| `passwd [nome]` | Troca a senha |
+| `chmod <octal> <nome>` | Muda permissões (só o dono) |
+| `chown <usuário> <nome>` | Muda o dono (só administrador) |
+
+Detalhes do modelo de contas, permissões, migração e testes em
+[docs/USUARIOS_E_PERMISSOES.md](docs/USUARIOS_E_PERMISSOES.md).
 
 ---
 
@@ -201,10 +228,10 @@ arquivos persistentes.
 ## Limitações Técnicas Atuais
 
 1. **Escalabilidade do FS:** Limite de 128 itens por diretório e 1 MB por arquivo.
-2. **Controlador:** O driver atual suporta ATA/IDE PIO, não AHCI/SATA nativo.
-3. **Particionamento:** O HAOSFS usa o volume inteiro e ainda não lê MBR ou GPT.
+2. **Controlador:** IDE/ATA (PIO) e SATA/AHCI (DMA) suportados; ainda não há NVMe. USB (xHCI) para teclado e mouse: ver [docs/USB.md](docs/USB.md). Armazenamento: [docs/ARMAZENAMENTO.md](docs/ARMAZENAMENTO.md).
+3. **Particionamento:** lê MBR e GPT (somente leitura) e só usa partição HAOS, disco em branco ou HAOSFS já existente — nunca toca em discos de outros sistemas.
 4. **Robustez:** Ainda não há journaling nem recuperação garantida se a energia for interrompida durante uma gravação.
-5. **Isolamento de Processos:** O sistema opera integralmente em Ring 0 (Kernel Mode) sem separação de espaço de usuário e multitarefa preemptiva.
+5. **Isolamento de Processos:** Programas `.hexec` rodam em Ring 3 com espaço de endereçamento próprio e scheduler preemptivo, e agora também com identidade (`uid`/`gid`) e permissões de arquivo. Ainda não há grupos compartilhados, nem configurações por usuário (tema/idioma/wallpaper são globais).
 6. **Drivers:** Ainda não há suporte a USB, PCI, ACPI avançado ou som.
 
 ---
@@ -221,3 +248,14 @@ Para entender os fluxos de inicialização, a arquitetura visual interna e o fun
 * [Multiboot2 Specification](https://www.gnu.org/software/grub/manual/multiboot2/multiboot.html)
 * [Intel 64 and IA-32 Architectures Software Developer Manuals](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
 * [CPUID Instruction](https://en.wikipedia.org/wiki/CPUID)
+
+## Novidades: entrada interativa e mais recursos de processos
+
+- **stdin bloqueante** (`read(0, ...)`) e **`scanf`** (`%d %i %u %c %s`, sem `%f`)
+- **Ctrl+C** encerra o processo em foco no terminal
+- **`run prog.hexec &`** roda em background (até 4 por terminal)
+- **Escrita de arquivos** por processos: `open2(path, O_WRONLY|O_CREAT|O_TRUNC)` + `write_fd()`
+  (fds 0/1/2 são reservados; arquivos começam em fd 3)
+- **`spawn(path, argv)`** — um programa inicia outro (equivale a `CreateProcess`, NÃO é `fork`)
+- **`waitpid(pid, &exit_code)`** — bloqueia até o filho criado por `spawn()` terminar
+Para gerar os `.hexec` embutidos: `make apps` (ou `bash tools/build_apps.sh`); o conversor é `tools/embed_hexec.py`.
