@@ -66,7 +66,7 @@ Isso gera:
 
 1. Escreva seu `main.c` normalmente, incluindo só os headers desta
    libc (`unistd.h`, `string.h`, etc. — nunca a libc do seu sistema
-   host). Veja `examples/hello_c/main.c` como referência mínima.
+   host). Veja `examples/winpaint/main.c` como referência.
 
 2. Compile para objeto, apontando para os headers da libc:
    ```bash
@@ -96,12 +96,12 @@ Isso gera:
    (via `size`) automaticamente — diferente da versão anterior deste
    script, que exigia esses valores como argumentos manuais para
    binários "flat" sem informação de seções (a era do
-   `userland/hello.asm`, agora removida).
+   antigo `userland/hello.asm`).
 
 5. Rode no HAOS: copie o `.hexec` para dentro do VFS (hoje, o único
    jeito prático é embutir como array C em
-   `kernel/generated/` e integrar em `fs/vfs.c` — ver
-   `kernel/generated/hello_hexec_data.h` como referência; um
+   `kernel/generated/` (`tools/embed_hexec.py`) e integrar em `fs/vfs.c` — ver
+   como `winpaint` e `imgview` são embutidos lá; um
    mecanismo melhor de "instalar" um `.hexec` no VFS sem recompilar o
    kernel é trabalho futuro) e execute com `run meuprograma.hexec`
    no terminal, ou dando duplo-clique nele no explorador de arquivos.

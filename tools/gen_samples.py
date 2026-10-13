@@ -134,6 +134,7 @@ def cname(fname):
     return fname.replace(".", "_").replace("-", "_")
 
 # ---- header de dados ----
+os.makedirs(os.path.join(ROOT, "kernel/generated"), exist_ok=True)
 with open(os.path.join(ROOT, "kernel/generated/samples_data.h"), "w") as f:
     f.write("// GERADO por tools/gen_samples.py — não edite à mão.\n#pragma once\n\n")
     for name, data, *_ in samples:

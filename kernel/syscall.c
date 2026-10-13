@@ -199,7 +199,7 @@ static uint64_t sys_write(uint64_t user_ptr, uint64_t len) {
 // PAI bloqueado dentro de sys_waitpid (via scheduler_yield) e um
 // processo FILHO fazendo suas próprias syscalls ao mesmo tempo
 // usavam a MESMA pilha global, cada um sobrescrevendo o que o outro
-// tinha empilhado — travava o sistema (ver examples/launcher).
+// tinha empilhado — travava o sistema (programa que usa spawn()/waitpid()).
 // Corrigido dando a cada task sua PRÓPRIA pilha de kernel para o
 // corpo de qualquer syscall (current_syscall_stack_top, atualizada
 // por scheduler.c/do_switch_to a cada troca de contexto — ver
@@ -290,7 +290,7 @@ static uint64_t sys_sbrk(int64_t increment) {
 // POSIX) e nunca devolvidos aqui. Antes desta correção o primeiro
 // arquivo aberto recebia fd 0, que sys_read trata como stdin: um
 // read() nesse fd bloqueava esperando teclado em vez de ler o
-// arquivo (bug encontrado em teste real no QEMU com examples/notes).
+// arquivo (bug encontrado em teste real no QEMU com um programa de notas (scanf + arquivo)).
 // Consequência: cada processo pode ter TASK_MAX_OPEN_FILES - 3
 // arquivos abertos ao mesmo tempo (5 hoje).
 #define FIRST_FILE_FD 3
@@ -605,7 +605,7 @@ static uint64_t sys_close(uint64_t fd) {
     // sys_write_fd (haosfs_save regrava o filesystem INTEIRO do zero
     // a cada chamada — ver comentário grande em fs/haosfs.c — então
     // fazer isso por escrita faria um programa que grava em vários
-    // pedaços pequenos, como examples/notes, ficar extremamente lento
+    // pedaços pequenos, como um programa de notas, ficar extremamente lento
     // e desgastar o disco à toa). Em vez disso, sincronizamos aqui,
     // no close() — o ponto natural de "terminei de escrever este
     // arquivo" — e de novo no reaper (task_reap_zombies, kernel/

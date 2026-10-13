@@ -87,7 +87,7 @@ Teclas que o widget em foco não trata vão para `ui_set_key_handler()`. `ui_set
 
 **Tema.** Tudo é desenhado com as cores do tema do sistema e se redesenha sozinho com `HAOS_EV_THEME`.
 
-Exemplo completo: `examples/uidemo` (instalado em `/bin/uidemo.hexec`).
+Exemplo completo: `examples/uidemo` (não vem embutido por padrão; gere com `bash tools/build_apps.sh winpaint imgview uidemo` e rode `make`).
 
 ## Testes
 ```bash

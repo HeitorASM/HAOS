@@ -63,7 +63,7 @@ section .bss
 ; reentrância clássica, cada um sobrescrevendo o que o outro tinha
 ; empilhado. Sintoma observado: o sistema travava (ou corrompia
 ; silenciosamente) ao primeiro waitpid() real num processo com
-; filhos concorrentes (ver examples/launcher).
+; filhos concorrentes (programa que usa spawn()/waitpid()).
 ;
 ; Correção: cada processo de usuário já tem sua PRÓPRIA pilha de
 ; kernel dedicada (task_t::stack_base, TASK_STACK_SIZE = 16KB — a

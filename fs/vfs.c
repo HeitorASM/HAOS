@@ -2,11 +2,9 @@
 #include "../kernel/memory.h"
 #include "haosfs.h"
 #include "../drivers/storage.h"
-#include "../kernel/generated/hello_hexec_data.h"
-#include "../kernel/generated/calc_hexec_data.h"
 
-// winpaint (janela gráfica Ring 3) só entra se o header GERADO existir —
-// ele é criado por `bash tools/build_apps.sh`. Assim o kernel compila
+// Os apps embutidos só entram se o header GERADO existir — ele é criado por
+// `bash tools/build_apps.sh` (ou `make apps`). Assim o kernel compila
 // mesmo antes de os apps terem sido gerados.
 #if defined(__has_include)
 #  if __has_include("../kernel/generated/winpaint_hexec_data.h")
@@ -17,6 +15,8 @@
 #    include "../kernel/generated/imgview_hexec_data.h"
 #    define HAVE_IMGVIEW_HEXEC 1
 #  endif
+// uidemo é só um exemplo da UI: NÃO é embutido por padrão. Para incluí-lo,
+// rode `bash tools/build_apps.sh winpaint imgview uidemo` antes do make.
 #  if __has_include("../kernel/generated/uidemo_hexec_data.h")
 #    include "../kernel/generated/uidemo_hexec_data.h"
 #    define HAVE_UIDEMO_HEXEC 1
@@ -114,9 +114,10 @@ static bool vfs_add_child(VfsNode* parent, VfsNode* child) {
 // '\0' — inaceitável para código de máquina). Rode com
 // "run <nome>.hexec" no terminal.
 //
-//   hello     — exemplo mínimo da libc
-//   calc      — calculadora (scanf)
-//   winpaint  — janela gráfica Ring 3 (SYS_WIN_*); só se o header existir
+//   winpaint  — pintura (janela gráfica Ring 3, SYS_WIN_*)
+//   imgview   — visualizador de imagens PNG/BMP
+//   uidemo    — demo opcional do toolkit de UI (fora do padrão)
+// Todos só entram se o header gerado existir.
 typedef struct {
     const char*          name;
     const unsigned char* data;
@@ -124,8 +125,6 @@ typedef struct {
 } BuiltinBin;
 
 static const BuiltinBin g_builtin_bins[] = {
-    { "hello.hexec",  hello_hexec_data,  HELLO_HEXEC_SIZE  },
-    { "calc.hexec",   calc_hexec_data,   CALC_HEXEC_SIZE   },
 #ifdef HAVE_WINPAINT_HEXEC
     { "winpaint.hexec", winpaint_hexec_data, WINPAINT_HEXEC_SIZE },
 #endif

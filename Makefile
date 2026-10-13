@@ -130,9 +130,16 @@ C_OBJS       = $(C_SRCS:.c=.o)
 CXX_OBJS     = $(CXX_SRCS:.cpp=.o)
 OBJS         = $(ASM_OBJS) $(C_OBJS) $(CXX_OBJS) $(WALLPAPER_OBJS)
 
-.PHONY: all iso clean wallpapers
+.PHONY: all iso clean wallpapers apps
 
 all: haos.elf
+
+# ── Apps de usuário embutidos (winpaint, imgview) + imagens de exemplo ──
+# Gera kernel/generated/*.h. Requer o cross-compiler e python3.
+# Rode `make apps` uma vez (ou após mudar examples/ ou libc/) antes de `make`.
+apps:
+	bash tools/build_apps.sh
+	python3 tools/gen_samples.py
 
 # ── Regras de compilação ──────────────────────────────────────────────────
 %.o: %.asm
@@ -157,6 +164,7 @@ iso: haos.elf
 clean:
 	find . -name "*.o" -delete
 	rm -f haos.elf haos.iso iso/boot/haos.elf
+	rm -rf libc/build kernel/generated
 	@echo "  [OK] limpeza concluída"
 
 wallpapers:

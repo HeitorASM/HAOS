@@ -19,7 +19,7 @@
 #   build/libc.a  — todo o resto (syscall, unistd, string, stdlib),
 #                   para linkar normalmente com -lc -L build.
 #
-# Uso típico por um programa de usuário (ver userland_examples/):
+# Uso típico por um programa de usuário (ver examples/):
 #   x86_64-linux-gnu-gcc -ffreestanding -fno-pic -mno-red-zone \
 #       -mno-sse -mno-sse2 -nostdlib -I libc/include \
 #       -c meuprograma.c -o meuprograma.o

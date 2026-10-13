@@ -177,7 +177,7 @@ static void do_switch_to(task_t* next) {
         // que ela fizer dali para frente — não mais uma pilha global
         // compartilhada entre processos de usuário diferentes
         // (reentrância que travava o sistema com waitpid()+spawn()
-        // concorrentes, ver examples/launcher). Só task 0 (GUI,
+        // concorrentes, ex.: um programa que usa spawn()/waitpid()). Só task 0 (GUI,
         // stack_base == 0) nunca entra em Ring 3 e portanto nunca
         // faz syscall — por isso este bloco, condicionado a
         // stack_base != 0, nunca precisa tratar esse caso.
