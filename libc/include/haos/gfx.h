@@ -53,6 +53,13 @@ extern "C" {
 #define HAOS_KEY_PAGE_DOWN 0x8F
 #define HAOS_KEY_HOME      0x90
 #define HAOS_KEY_END       0x91
+#define HAOS_KEY_F2        0x84
+#define HAOS_KEY_CTRL_S    0x85
+#define HAOS_KEY_CTRL_C    0x86
+#define HAOS_KEY_CTRL_V    0x87
+#define HAOS_KEY_CTRL_X    0x88
+#define HAOS_KEY_CTRL_A    0x89
+#define HAOS_KEY_DELETE    0x94
 
 #define WIN_TEXT_OPAQUE    1             // win_text_bg: pinta o fundo de cada caractere
 #define WIN_WAIT_FOREVER   0xFFFFFFFFu   // timeout de win_event: espera indefinida

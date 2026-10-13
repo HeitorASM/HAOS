@@ -17,6 +17,10 @@
 #    include "../kernel/generated/imgview_hexec_data.h"
 #    define HAVE_IMGVIEW_HEXEC 1
 #  endif
+#  if __has_include("../kernel/generated/uidemo_hexec_data.h")
+#    include "../kernel/generated/uidemo_hexec_data.h"
+#    define HAVE_UIDEMO_HEXEC 1
+#  endif
 #  if __has_include("../kernel/generated/samples_data.h")
 #    include "../kernel/generated/samples_data.h"
 #    define HAVE_SAMPLE_IMAGES 1
@@ -127,6 +131,9 @@ static const BuiltinBin g_builtin_bins[] = {
 #endif
 #ifdef HAVE_IMGVIEW_HEXEC
     { "imgview.hexec", imgview_hexec_data, IMGVIEW_HEXEC_SIZE },
+#endif
+#ifdef HAVE_UIDEMO_HEXEC
+    { "uidemo.hexec", uidemo_hexec_data, UIDEMO_HEXEC_SIZE },
 #endif
 };
 

@@ -11,6 +11,13 @@
 //  pareçam duplicados por enquanto.
 // ============================================================
 
+// Testes de HOST (tests/libui, tests/ui) compilam a libc com -DHAOS_HOST_BUILD e usam os
+// tipos do compilador/glibc; os typedefs abaixo só valem no HAOS (conflitam com <stdint.h>).
+#ifdef HAOS_HOST_BUILD
+#  include <stdint.h>
+#  include <stddef.h>
+#  include <sys/types.h>
+#else
 typedef unsigned char      uint8_t;
 typedef unsigned short     uint16_t;
 typedef unsigned int       uint32_t;
@@ -23,6 +30,8 @@ typedef uint64_t           uintptr_t;
 
 typedef __SIZE_TYPE__      size_t;
 typedef __PTRDIFF_TYPE__   ssize_t;
+
+#endif
 
 #ifndef NULL
 #define NULL ((void*)0)

@@ -63,6 +63,8 @@ C_SRCS = src/unistd/write.c   \
          src/gfx/window.c     \
          src/gfx/draw.c       \
          src/gfx/uitheme.c    \
+         src/gfx/ui.c         \
+         src/gfx/ui_dialog.c  \
          src/stdlib/exit.c    \
          src/stdlib/malloc.c  \
          src/stdio/printf.c   \
